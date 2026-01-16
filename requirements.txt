@@ -3,3 +3,7 @@ uvicorn
 pydantic
 requests
 python-multipart
+python-dotenv
+gtts
+openai
+google-generativeai

@@ -1,399 +1,643 @@
 import os
 import json
-import requests
-import uuid
+import subprocess
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+
+
+# Load environment variables from .env file
+load_dotenv()
+
+import mimetypes
+mimetypes.init()
+mimetypes.add_type('audio/mpeg', '.mp3')
+mimetypes.add_type('audio/wav', '.wav')
+
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+from core.config import PROJECTS_DIR
+from core import project as project_utils
+from core.errors import PipelineError
+from core.logger import log_event
+from core.state import set_done # Import here
+from upload import downloader
+from core import step_registry
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configuration
-# Resolving root directory relative to this file (backend/main.py)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROJECTS_DIR = os.path.join(BASE_DIR, "projects")
-
-# Serve project files statically so frontend can display images
-# URL: http://localhost:8000/media/{project_id}/path/to/file
-if not os.path.exists(PROJECTS_DIR):
-    os.makedirs(PROJECTS_DIR, exist_ok=True)
+# Assets
 app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
-@app.get("/projects/{project_id}/assets")
-def list_project_assets(project_id: str):
-    """
-    Lists image files DIRECTLY in the project's input folder.
-    Supported: jpg, jpeg, png, webp.
-    """
+@app.get("/voice/profiles")
+def get_voice_profiles():
+    from utils.tts_handler import get_voice_profiles
+    return get_voice_profiles()
+
+@app.get("/projects/{project_id}/voice/files")
+def get_project_voice_files(project_id: str):
+    from utils.tts_handler import list_voice_files
     project_path = os.path.join(PROJECTS_DIR, project_id)
-    target_dir = os.path.join(project_path, "input")
+    return list_voice_files(project_path, project_id)
+
+class VoiceGenerateRequest(BaseModel):
+    profile_id: str
+    text: str
+    provider: str
+    voice: Optional[str] = None
+    speed: float = 1.0
+
+@app.post("/projects/{project_id}/voice/generate")
+def generate_project_voice(project_id: str, request: VoiceGenerateRequest):
+    from utils.tts_handler import generate_voice
+    project_path = os.path.join(PROJECTS_DIR, project_id)
     
-    if not os.path.exists(target_dir):
-        return []
+    # We now trust the payload's text if provided, 
+    # but still fall back to script file if text is blank (for safety)
+    content = request.text or ""
+    if not content:
+        script_path = os.path.join(project_path, "script", "script.txt")
+        if os.path.exists(script_path):
+            with open(script_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+    
+    if not content:
+        raise HTTPException(status_code=400, detail="Script content is empty.")
         
-    assets = []
-    valid_exts = {".jpg", ".jpeg", ".png", ".webp"} # Simplified as per patch
+    # generate_voice in tts_handler needs updating to accept provider/voice directly
+    # but for now we'll pass the richer object or keep signature
+    result = generate_voice(
+        project_id, 
+        project_path, 
+        content, 
+        request.profile_id, 
+        request.speed,
+        provider=request.provider,
+        voice_name=request.voice
+    )
     
-    for item in os.listdir(target_dir):
-        if any(item.lower().endswith(ext) for ext in valid_exts):
-             assets.append({
-                 "name": item,
-                 "url": f"/media/{project_id}/input/{item}"
-             })
-             
-    return assets
+    if result.get("status") == "FAIL":
+        raise HTTPException(status_code=500, detail=result.get("error", "Voice generation failed"))
+    
+    # Update project timestamp
+    timestamp_update(project_path)
 
-@app.get("/projects/{project_id}/logs")
-def get_project_logs(project_id: str):
-    """
-    Reads log files from /projects/{project_id}/log
-    Returns: { "lines": [string] }
-    Constraints: Limit to last 200 lines.
-    """
+    return result
+
+def timestamp_update(project_path):
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        with open(project_json_path, 'r') as f: data = json.load(f)
+        data["last_updated"] = datetime.now().isoformat()
+        with open(project_json_path, 'w') as f: json.dump(data, f, indent=2)
+
+@app.delete("/projects/{project_id}/voice/{filename}")
+def delete_project_voice(project_id: str, filename: str):
+    from utils.tts_handler import delete_voice_file
     project_path = os.path.join(PROJECTS_DIR, project_id)
-    log_dir = os.path.join(project_path, "log")
+    success, msg = delete_voice_file(project_path, filename)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
     
-    if not os.path.exists(log_dir):
-        return {"lines": []}
-    
-    all_lines = []
-    # Read all .log files (usually there's one main log or rotated logs)
-    # Sorting by modification time ensures chronological order broadly
-    log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
-    log_files.sort(key=lambda x: os.path.getmtime(os.path.join(log_dir, x)))
-    
-    for log_file in log_files:
-        try:
-            with open(os.path.join(log_dir, log_file), 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-                # Strip newlines for cleaner JSON
-                all_lines.extend([l.rstrip() for l in lines])
-        except Exception:
-            pass # Skip unreadable files
-            
-    # Return last 200 lines
-    return {"lines": all_lines[-200:]}
+    # Update project timestamp
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        with open(project_json_path, 'r') as f: data = json.load(f)
+        data["last_updated"] = datetime.now().isoformat()
+        with open(project_json_path, 'w') as f: json.dump(data, f, indent=2)
+        
+    return {"message": msg}
 
-class BulkUrlUploadRequest(BaseModel):
-    urls: list[str]
+class VoiceActivateRequest(BaseModel):
+    filename: str
 
-@app.post("/projects/{project_id}/upload/urls")
-def upload_urls_by_list(project_id: str, request: BulkUrlUploadRequest):
-    """
-    Downloads images from a list of URLs sequentially.
-    - Saves to /input
-    - Auto-renames on conflict
-    - Logs to log/upload-url.log
-    - Creates state/upload.done
-    """
+@app.post("/projects/{project_id}/voice/activate")
+def activate_project_voice(project_id: str, request: VoiceActivateRequest):
+    from utils.tts_handler import set_active_voice
     project_path = os.path.join(PROJECTS_DIR, project_id)
-    input_dir = os.path.join(project_path, "input")
-    log_dir = os.path.join(project_path, "log")
-    state_dir = os.path.join(project_path, "state")
+    success, msg = set_active_voice(project_path, request.filename)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
     
+    # Update project timestamp
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        with open(project_json_path, 'r') as f: data = json.load(f)
+        data["last_updated"] = datetime.now().isoformat()
+        with open(project_json_path, 'w') as f: json.dump(data, f, indent=2)
+        
+    return {"message": msg}
+
+@app.post("/projects/{project_id}/timeline/generate")
+def generate_project_timeline(project_id: str):
+    from utils.timeline_manager import build_timeline
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    result = build_timeline(project_path)
+    if result.get("status") == "FAIL":
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    
+    timestamp_update(project_path)
+    return result
+
+@app.get("/projects/{project_id}/timeline")
+def get_project_timeline(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    timeline_path = os.path.join(project_path, "timeline.json")
+    if not os.path.exists(timeline_path):
+        raise HTTPException(status_code=404, detail="Timeline not found")
+    with open(timeline_path, 'r') as f:
+        return json.load(f)
+
+@app.post("/projects/{project_id}/timeline/update")
+def update_project_timeline(project_id: str, timeline_data: dict):
+    """Update timeline with user modifications (reordering, effect changes)"""
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    timeline_path = os.path.join(project_path, "timeline.json")
+    
+    # Save updated timeline
+    with open(timeline_path, 'w') as f:
+        json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+    
+    # Update project timestamp
+    timestamp_update(project_path)
+    
+    return {"status": "OK", "message": "Timeline updated successfully"}
+
+@app.post("/projects/{project_id}/render/dry-run")
+def dry_run_valication(project_id: str):
+    """Perform a dry run validation before actual rendering."""
+    from utils.render_validator import validate_render
+    project_path = os.path.join(PROJECTS_DIR, project_id)
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
     
-    os.makedirs(state_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
-    
-    results = []
-    success_count = 0
-    from datetime import datetime
-    
-    log_file_path = os.path.join(log_dir, "upload-url.log")
-    
-    valid_exts = (".jpg", ".jpeg", ".png", ".webp")
-    
-    for url in request.urls:
-        url = url.strip()
-        if not url: continue
-        
-        status = {"url": url, "success": False, "filename": None, "error": None}
-        
-        try:
-            # Basic validation
-            if not any(url.lower().endswith(ext) for ext in valid_exts) and "?" not in url:
-                 # If no extension in URL, we might still want to try but user constraint said validate
-                 # Let's be semi-strict
-                 pass
-            
-            response = requests.get(url, timeout=10, stream=True)
-            response.raise_for_status()
-            
-            # Extract filename from URL or header
-            orig_filename = url.split("/")[-1].split("?")[0]
-            if not orig_filename or not any(orig_filename.lower().endswith(ext) for ext in valid_exts):
-                orig_filename = f"image_{uuid.uuid4().hex[:8]}.jpg"
-            
-            # Conflict handling: Rename if exists
-            base, ext = os.path.splitext(orig_filename)
-            final_filename = orig_filename
-            counter = 1
-            while os.path.exists(os.path.join(input_dir, final_filename)):
-                final_filename = f"{base}_{counter}{ext}"
-                counter += 1
-            
-            target_path = os.path.join(input_dir, final_filename)
-            with open(target_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            status["success"] = True
-            status["filename"] = final_filename
-            success_count += 1
-            
-        except Exception as e:
-            status["error"] = str(e)
-            
-        results.append(status)
-        
-        # Log entry
-        now = datetime.now().isoformat()
-        log_msg = f"[{now}] URL: {url} | Success: {status['success']} | File: {status['filename']} | Error: {status['error']}\n"
-        with open(log_file_path, 'a') as f:
-            f.write(log_msg)
+    report = validate_render(project_path)
+    return report
 
-    if success_count > 0:
-        done_file = os.path.join(state_dir, "upload.done")
-        with open(done_file, 'w') as f:
-            f.write(f"Completed at {datetime.now().isoformat()}\n")
-            
-    return {"results": results, "success_count": success_count}
+# --- Music Support ---
+@app.get("/music/files")
+def list_music_files():
+    assets_dir = os.path.join(os.path.dirname(__file__), "assets", "music")
+    if not os.path.exists(assets_dir):
+        return []
+    valid_exts = {".mp3", ".wav"}
+    files = [f for f in os.listdir(assets_dir) if any(f.lower().endswith(ext) for ext in valid_exts)]
+    return sorted(files)
 
+class MusicConfig(BaseModel):
+    music_file: str
+    enabled: bool = True
+    volume_adj: int = -20
+
+@app.post("/projects/{project_id}/music/mix")
+def mix_project_audio(project_id: str, config: MusicConfig):
+    from utils.audio_mixer import mix_background_music
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Save to project.json
+    json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        data["music_config"] = config.dict()
+        with open(json_path, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    # Run Mixer
+    music_file = config.music_file if config.enabled else "none"
+    result = mix_background_music(project_path, music_file, config.volume_adj)
+    
+    if result.get("status") == "FAIL":
+        raise HTTPException(status_code=500, detail=result.get("error"))
+    
+    timestamp_update(project_path)
+    return result
+
+class RenderRequest(BaseModel):
+    video_format: str = "portrait"
+    transition_id: str = "none"
+    transition_duration: float = 0.5
+
+@app.post("/projects/{project_id}/render")
+def render_project_video(project_id: str, request: RenderRequest):
+    from utils.video_renderer import render_video
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    result = render_video(
+        project_path, 
+        video_format=request.video_format,
+        transition_id=request.transition_id,
+        transition_duration=request.transition_duration
+    )
+    
+    if result.get("status") == "FAIL":
+        raise HTTPException(status_code=500, detail=result.get("error"))
+        
+    timestamp_update(project_path)
+    return result
+
+@app.get("/projects/{project_id}/download/video")
+def download_project_video(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    video_path = os.path.join(project_path, "output", "final_video.mp4")
+    
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
+        
+    # Determine Resolution (using portable ffprobe if avail)
+    resolution = "1080x1920" # Default
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        bin_dir = os.path.join(base_dir, "bin")
+        env = os.environ.copy()
+        if os.path.exists(bin_dir):
+            env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+            
+        cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+               "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", video_path]
+        res_output = subprocess.check_output(cmd, env=env).decode("utf-8").strip()
+        if res_output:
+            resolution = res_output
+    except Exception as e:
+        print(f"Error probing video resolution: {e}")
+
+    # Generate Filename: projectname-YYMMDD-vTime-widthxhigh.mp4
+    now = datetime.now()
+    date_str = now.strftime("%y%m%d") # YYMMDD
+    time_str = now.strftime("v%H%M")  # vTime
+    
+    filename = f"{project_id}-{date_str}-{time_str}-{resolution}.mp4"
+
+    return FileResponse(
+        video_path, 
+        media_type="video/mp4", 
+        filename=filename
+    )
+
+@app.get("/projects/{project_id}/assets")
+def list_project_assets(project_id: str):
+    return project_utils.list_assets(project_id)
+
+@app.get("/projects/{project_id}/logs")
+def get_project_logs(project_id: str):
+    return project_utils.get_project_logs(project_id)
+
+@app.get("/projects/{project_id}/logs/download")
+def download_project_logs(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    log_file = os.path.join(project_path, "log", "pipeline.log")
+    
+    if not os.path.exists(log_file):
+        raise HTTPException(
+            status_code=404, 
+            detail="Log file not found. Run pipeline steps first."
+        )
+        
+    return FileResponse(
+        path=log_file,
+        filename=f"{project_id}_pipeline.log",
+        media_type="text/plain"
+    )
+
+# Pipeline
 class PipelineStepRequest(BaseModel):
     step_name: str
 
 @app.post("/projects/{project_id}/run")
 def run_pipeline_step(project_id: str, request: PipelineStepRequest):
-    """
-    Mock pipeline execution.
-    1. Updates project.json pipeline status.
-    2. Writes to log/pipeline.log.
-    3. Handles specific logic for script_gen (mock).
-    """
     project_path = os.path.join(PROJECTS_DIR, project_id)
-    project_json_path = os.path.join(project_path, "project.json")
-    log_dir = os.path.join(project_path, "log")
-    
-    if not os.path.exists(project_json_path):
+    if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 1. Update project.json
-    try:
-        with open(project_json_path, 'r') as f:
-            data = json.load(f)
-    except:
-        data = {"status": "unknown"}
-        
+    # Load project data
+    project_json_path = os.path.join(project_path, "project.json")
+    with open(project_json_path, 'r') as f:
+        data = json.load(f)
+    
     if "pipeline" not in data:
         data["pipeline"] = {}
-        
-    from datetime import datetime
+
     now = datetime.now().isoformat()
-    
-    # --- Step Specific Logic ---
-    log_extra = ""
-    
-    # Common Validation Logic (Step 1 requirement)
-    # Check /input exists and count images
-    input_dir = os.path.join(project_path, "input")
-    valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
-    image_files = []
-    if os.path.exists(input_dir):
-        image_files = [f for f in os.listdir(input_dir) if any(f.lower().endswith(ext) for ext in valid_exts)]
-    
-    validation_log = f"[{now}] [STEP 1] Found {len(image_files)} image(s) in /input (Validated)\n"
-    
-    if request.step_name == "script_gen":
-        # Read product_name from input/product.json
-        product_name = None
-        product_json_path = os.path.join(project_path, "input", "product.json")
-        if os.path.exists(product_json_path):
-            try:
-                with open(product_json_path, 'r') as f:
-                    p_data = json.load(f)
-                    product_name = p_data.get("product_name")
-            except:
-                pass
-        
-        # Construct Prompt
-        prompt = "Task: Generate a catchy 15-second video script."
-        if product_name:
-            prompt += f" Mention the product '{product_name}' exactly once."
-        else:
-            prompt += " Focus on general appeal."
-        
-        # Mock Script Generation
-        mock_script = f"Hey check this out! {product_name if product_name else 'This amazing thing'} will change your life. Try it today!"
-        script_path = os.path.join(project_path, "script", "script.txt")
-        with open(script_path, 'w') as f:
-            f.write(mock_script)
-            
-        log_extra += validation_log
-        log_extra += f"[PROMPT] {prompt}\n"
-        log_extra += f"[{now}] [INFO] Generated script saved to script/script.txt\n"
-
-    elif request.step_name == "video_stitch":
-        # Step 4 Requirement: Select Images
-        # Ignore non-image files like product.json (already handled by extensions check)
-        selected_images = ", ".join(image_files)
-        log_extra += validation_log
-        log_extra += f"[{now}] [STEP 4] Selected {len(image_files)} images for stitching: {selected_images}\n"
-        log_extra += f"[{now}] [INFO] Mocking FFmpeg process...\n"
-
-    # --- End Step Specific Logic ---
-
-    data["pipeline"][request.step_name] = {
-        "status": "completed",
-        "updated_at": now
-    }
     data["last_updated"] = now
     
+    try:
+        # Check if step is disabled in config.json
+        config_path = os.path.join(project_path, "input", "config.json")
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                disabled_steps = config.get("disabled_steps", [])
+                if request.step_name in disabled_steps:
+                    raise PipelineError("STEP_DISABLED", f"Step '{request.step_name}' is disabled in config.json", message_th=f"ขั้นตอน '{request.step_name}' ถูกปิดใช้งานใน config.json")
+
+        # Orchestration using Registry
+        from core.step_registry import get_step
+        step_obj = get_step(request.step_name)
+        
+        if not step_obj:
+            raise PipelineError("INVALID_STEP", f"Step '{request.step_name}' is not recognized", message_th=f"ไม่พบขั้นตอน '{request.step_name}' ในระบบ")
+
+        # Run the step
+        step_obj.run(project_id, project_path)
+        set_done(project_path, f"{request.step_name}.done")
+
+        data["pipeline"][request.step_name] = {
+            "status": "completed",
+            "updated_at": now,
+            "error": None
+        }
+    except PipelineError as e:
+        # Standardized Error Handling
+        msg = f"[ERROR] {e.code}: {e.message}"
+        if e.message_th:
+            msg += f" ({e.message_th})"
+        log_event(project_path, "pipeline.log", msg)
+        if e.detail:
+            log_event(project_path, "pipeline.log", f"[DETAIL] {e.detail}")
+            
+        data["pipeline"][request.step_name] = {
+            "status": "failed",
+            "updated_at": now,
+            "error": e.to_dict()
+        }
+        
+        with open(project_json_path, 'w') as f:
+            json.dump(data, f, indent=2)
+            
+        return {"message": "Step failed", "pipeline": data["pipeline"], "error": e.to_dict()}
+    except Exception as e:
+        # Fallback for unexpected errors
+        log_event(project_path, "pipeline.log", f"[CRITICAL] Unexpected error: {str(e)}")
+        data["pipeline"][request.step_name] = {
+            "status": "failed",
+            "updated_at": now,
+            "error": {"code": "UNKNOWN_ERROR", "message": str(e), "recoverable": True}
+        }
+        with open(project_json_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        return {"message": "Unexpected error", "pipeline": data["pipeline"]}
+
+    # Success Save
     with open(project_json_path, 'w') as f:
         json.dump(data, f, indent=2)
-
-    # 2. Append Log
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir, exist_ok=True)
-        
-    log_file = os.path.join(log_dir, "pipeline.log") 
-    log_entry = f"[{now}] [INFO] JOB {request.step_name} started (MOCK)\n"
-    if log_extra:
-        log_entry += log_extra
-    log_entry += f"[{now}] [INFO] JOB {request.step_name} completed successfully.\n"
-    
-    with open(log_file, 'a') as f:
-        f.write(log_entry)
         
     return {"message": f"Step {request.step_name} completed", "pipeline": data["pipeline"]}
 
+# Project Management
 class ProjectInitRequest(BaseModel):
     project_id: str
     product_name: str = None
 
-def initialize_project_structure(project_id: str, product_name: str = None) -> dict:
-    """
-    Creates folder structure under /projects/{project_id}
-    Creates initial project.json with status = "initialized"
-    Saves product_name to input/product.json if provided.
-    
-    Constraints:
-    - Must be idempotent.
-    - Must not overwrite existing product.json (if project exists).
-    """
-    if not project_id or ".." in project_id or project_id.startswith("/"):
-        raise ValueError("Invalid project_id")
-
-    project_path = os.path.join(PROJECTS_DIR, project_id)
-    project_json_path = os.path.join(project_path, "project.json")
-    product_json_path = os.path.join(project_path, "input", "product.json")
-
-    # Ensure main projects folder exists
-    if not os.path.exists(PROJECTS_DIR):
-        os.makedirs(PROJECTS_DIR, exist_ok=True)
-
-    # 1. Create folder structure under /projects/{project_id} (Idempotent)
-    is_new = not os.path.exists(project_path)
-    if is_new:
-        os.makedirs(project_path, exist_ok=True)
-
-    # Create standard subfolders
-    subfolders = ["input", "script", "audio", "video", "log"]
-    for folder in subfolders:
-        folder_path = os.path.join(project_path, folder)
-        os.makedirs(folder_path, exist_ok=True)
-
-    # 2. Handle product.json (Only for new projects or if not exists)
-    if product_name and not os.path.exists(product_json_path):
-        payload = {"product_name": product_name}
-        with open(product_json_path, 'w') as f:
-            json.dump(payload, f, indent=2)
-
-    # 3. Create initial project.json (Idempotent: Only if not exists)
-    if not os.path.exists(project_json_path):
-        from datetime import datetime
-        now = datetime.now().isoformat()
-        initial_data = {
-            "status": "initialized",
-            "created_at": now,
-            "last_updated": now
-        }
-        with open(project_json_path, 'w') as f:
-            json.dump(initial_data, f, indent=2)
-        return {"message": "Project initialized", "path": project_path, "newly_created": True}
-    
-    return {"message": "Project already exists", "path": project_path, "newly_created": False}
-
 @app.post("/projects/initialize")
 def init_project(request: ProjectInitRequest):
     try:
-        result = initialize_project_structure(request.project_id, request.product_name)
-        return result
+        return project_utils.initialize_project_structure(request.project_id, request.product_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/projects/{project_id}/run/auto")
+def run_pipeline_auto(project_id: str):
+    """
+    Auto-run the entire pipeline based on STEP_REGISTRY.
+    Skips completed or disabled steps.
+    """
+    from core.step_registry import STEP_REGISTRY
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Load config for disabled steps
+    disabled_steps = []
+    config_path = os.path.join(project_path, "input", "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                disabled_steps = config.get("disabled_steps", [])
+        except:
+            pass
+
+    execution_results = []
+    
+    for step in STEP_REGISTRY:
+        # Skip if disabled
+        if step.step_id in disabled_steps:
+            execution_results.append({"step_id": step.step_id, "status": "skipped", "reason": "disabled"})
+            continue
+            
+        # Skip if already completed (Step-based logic)
+        # Note: is_completed checks for state/step_id.done
+        # But we also update project.json. Let's stick to the prompt's request for stepX.done check.
+        if step.is_completed(project_path):
+            execution_results.append({"step_id": step.step_id, "status": "skipped", "reason": "already_done"})
+            continue
+            
+        # Run step using existing orchestration logic (via internal function or similar)
+        # To avoid duplicating logic, we'll just call the run_pipeline_step logic or refactor it.
+        # For this refactor, let's just use the step object directly.
+        try:
+            # We need to manually handle the project.json update here or share a helper
+            step.run(project_id, project_path)
+            set_done(project_path, f"{step.step_id}.done")
+            
+            # Record success in project.json
+            project_json_path = os.path.join(project_path, "project.json")
+            with open(project_json_path, 'r') as f:
+                data = json.load(f)
+            
+            if "pipeline" not in data: data["pipeline"] = {}
+            now = datetime.now().isoformat()
+            data["pipeline"][step.step_id] = {"status": "completed", "updated_at": now, "error": None}
+            data["last_updated"] = now
+            
+            with open(project_json_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            execution_results.append({"step_id": step.step_id, "status": "completed"})
+            
+        except PipelineError as e:
+            # Record failure
+            project_json_path = os.path.join(project_path, "project.json")
+            with open(project_json_path, 'r') as f:
+                data = json.load(f)
+            if "pipeline" not in data: data["pipeline"] = {}
+            now = datetime.now().isoformat()
+            data["pipeline"][step.step_id] = {"status": "failed", "updated_at": now, "error": e.to_dict()}
+            data["last_updated"] = now
+            with open(project_json_path, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+            execution_results.append({"step_id": step.step_id, "status": "failed", "error": e.code})
+            break # Stop on first failure
+            
+    return {"results": execution_results}
+
+@app.get("/pipeline/steps")
+def list_pipeline_steps():
+    from core.step_registry import STEP_REGISTRY
+    return [{"id": s.step_id, "label": s.label} for s in STEP_REGISTRY]
+
+class ProjectConfigRequest(BaseModel):
+    disabled_steps: list[str]
+
+@app.post("/projects/{project_id}/config")
+def update_project_config(project_id: str, request: ProjectConfigRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    config_path = os.path.join(project_path, "input", "config.json")
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    
+    config = {}
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            try:
+                config = json.load(f)
+            except:
+                pass
+                
+    config["disabled_steps"] = request.disabled_steps
+    
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+        
+    return {"message": "Configuration updated", "config": config}
+
+@app.post("/projects/{project_id}/reset-step/{step_id}")
+def reset_project_step(project_id: str, step_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    done_file = os.path.join(project_path, "state", f"{step_id}.done")
+    if os.path.exists(done_file):
+        os.remove(done_file)
+        
+    # Also update project.json status
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        with open(project_json_path, 'r') as f:
+            data = json.load(f)
+        if "pipeline" in data and step_id in data["pipeline"]:
+            data["pipeline"][step_id]["status"] = "pending"
+            data["pipeline"][step_id]["error"] = None
+            with open(project_json_path, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+    return {"message": f"Step {step_id} reset"}
+
+@app.get("/projects/{project_id}/script")
+def get_project_script(project_id: str):
+    from utils.script_generator import count_words
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    script_path = os.path.join(project_path, "script", "script.txt")
+    
+    content = ""
+    if os.path.exists(script_path):
+        with open(script_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+    return {
+        "content": content,
+        "word_count": count_words(content)
+    }
+
+class ScriptSaveRequest(BaseModel):
+    content: str
+
+@app.post("/projects/{project_id}/script")
+def save_project_script(project_id: str, request: ScriptSaveRequest):
+    from utils.script_generator import count_words
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    script_path = os.path.join(project_path, "script", "script.txt")
+    
+    # Calculate counts for logging
+    old_content = ""
+    if os.path.exists(script_path):
+        with open(script_path, 'r', encoding='utf-8') as f:
+            old_content = f.read()
+            
+    prev_word_count = count_words(old_content)
+    new_word_count = count_words(request.content)
+    
+    # Save file
+    os.makedirs(os.path.dirname(script_path), exist_ok=True)
+    with open(script_path, 'w', encoding='utf-8') as f:
+        f.write(request.content)
+        
+    # Update project.json status
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        with open(project_json_path, 'r') as f:
+            data = json.load(f)
+        
+        if "pipeline" not in data: data["pipeline"] = {}
+        if "script_gen" not in data["pipeline"]:
+             data["pipeline"]["script_gen"] = {}
+             
+        now = datetime.now().isoformat()
+        data["pipeline"]["script_gen"]["status"] = "MANUAL_EDIT"
+        data["pipeline"]["script_gen"]["updated_at"] = now
+        data["last_updated"] = now
+        
+        with open(project_json_path, 'w') as f:
+            json.dump(data, f, indent=2)
+            
+    # Log the action
+    log_msg = f"[MANUAL_EDIT] Script updated. Prev words: {prev_word_count}, New words: {new_word_count}"
+    log_event(project_path, "pipeline.log", f"Project: {project_id} - {log_msg}")
+    
+    return {"message": "Script saved", "word_count": new_word_count}
 
 @app.get("/projects")
 def list_projects():
-    """
-    Lists all existing projects.
-    - Reads /projects directory
-    - Returns project.json content including timestamps
-    - Skips invalid or missing project.json files
-    """
-    if not os.path.exists(PROJECTS_DIR):
-        return []
+    return project_utils.list_projects_metadata()
 
-    projects = []
-    # Read-only, no caching
-    for item in os.listdir(PROJECTS_DIR):
-        project_path = os.path.join(PROJECTS_DIR, item)
-        if os.path.isdir(project_path):
-            project_id = item
-            
-            project_json_path = os.path.join(project_path, "project.json")
-            if os.path.exists(project_json_path):
-                try:
-                    with open(project_json_path, 'r') as f:
-                        data = json.load(f)
-                        
-                        # Data Source requirement: Read from input/product.json
-                        product_name = "-"
-                        product_json_path = os.path.join(project_path, "input", "product.json")
-                        if os.path.exists(product_json_path):
-                            try:
-                                with open(product_json_path, 'r') as pf:
-                                    p_data = json.load(pf)
-                                    product_name = p_data.get("product_name", "-")
-                            except:
-                                pass
+class UpdateProductRequest(BaseModel):
+    product_name: str
 
-                        projects.append({
-                            "project_id": project_id,
-                            "product_name": product_name, # New field
-                            "status": data.get("status", "unknown"),
-                            "created_at": data.get("created_at"),
-                            "last_updated": data.get("last_updated"),
-                            "pipeline": data.get("pipeline", {})
-                        })
-                except Exception as e:
-                    # Log error but skip this project to prevent crash (Constraint)
-                    print(f"Error reading project {project_id}: {e}")
-                    continue
-    
-    return projects
+@app.post("/projects/{project_id}/update/product")
+def update_project_product(project_id: str, request: UpdateProductRequest):
+    result = project_utils.update_product_name(project_id, request.product_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"message": "Product name updated", "product_name": result}
+
+# Upload
+class BulkUrlUploadRequest(BaseModel):
+    urls: list[str]
+
+@app.post("/projects/{project_id}/upload/urls")
+def upload_urls(project_id: str, request: BulkUrlUploadRequest):
+    result = downloader.download_images_from_urls(project_id, request.urls)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
