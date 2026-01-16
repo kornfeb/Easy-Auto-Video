@@ -142,7 +142,7 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
         
-    log_file = os.path.join(log_dir, "pipeline.logs") # Using .logs to distinguish
+    log_file = os.path.join(log_dir, "pipeline.log") # Fixed extension
     log_entry = f"[{now}] [INFO] JOB {request.step_name} started (MOCK)\n"
     log_entry += f"[{now}] [INFO] JOB {request.step_name} completed successfully.\n"
     

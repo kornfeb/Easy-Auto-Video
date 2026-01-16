@@ -249,7 +249,7 @@ function ProjectDetail() {
       <PipelineManager project={project} onUpdate={loadProject} />
 
       {/* Log Viewer Section */}
-      <LogViewer projectId={id} />
+      <LogViewer projectId={id} lastUpdated={project.last_updated} />
 
     </div>
   );
@@ -321,7 +321,7 @@ function PipelineManager({ project, onUpdate }) {
   );
 }
 
-function LogViewer({ projectId }) {
+function LogViewer({ projectId, lastUpdated }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL'); // ALL, INFO, ERROR
@@ -337,7 +337,7 @@ function LogViewer({ projectId }) {
         console.error("Failed to load logs", err);
         setLoading(false);
       });
-  }, [projectId]);
+  }, [projectId, lastUpdated]);
 
   const filteredLogs = logs.filter(line => {
     if (filter === 'ALL') return true;
