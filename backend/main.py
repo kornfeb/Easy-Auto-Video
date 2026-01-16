@@ -1,6 +1,7 @@
 import os
 import json
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -18,6 +19,50 @@ app.add_middleware(
 # Resolving root directory relative to this file (backend/main.py)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS_DIR = os.path.join(BASE_DIR, "projects")
+
+# Serve project files statically so frontend can display images
+# URL: http://localhost:8000/media/{project_id}/path/to/file
+if not os.path.exists(PROJECTS_DIR):
+    os.makedirs(PROJECTS_DIR, exist_ok=True)
+app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
+
+@app.get("/projects/{project_id}/assets")
+def list_project_assets(project_id: str):
+    """
+    Lists image files in the project's input folder.
+    Note: The input folder is assumed to be 'input' directly, or 'input/images' based on user prompt.
+    User prompt said: /projects/{project_id}/input/images
+    But initial script created: /projects/{project_id}/input
+    I will look in both/recursively or just 'input' and filter images.
+    """
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    # Check standard input path first
+    # User requested /input/images specifically. 
+    # But my init script only made /input. 
+    # I will check /input/images first, if fail, try /input.
+    
+    target_dir = os.path.join(project_path, "input")
+    # If user manually made an 'images' subfolder:
+    if os.path.exists(os.path.join(target_dir, "images")):
+         target_dir = os.path.join(target_dir, "images")
+    
+    if not os.path.exists(target_dir):
+        return []
+        
+    assets = []
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    
+    for item in os.listdir(target_dir):
+        if any(item.lower().endswith(ext) for ext in valid_exts):
+             # Return relative path for StaticFiles usage
+             # If target_dir was input/images, relative path is input/images/item
+             rel_path = os.path.relpath(os.path.join(target_dir, item), project_path)
+             assets.append({
+                 "name": item,
+                 "url": f"/media/{project_id}/{rel_path}"
+             })
+             
+    return assets
 
 class ProjectInitRequest(BaseModel):
     project_id: str

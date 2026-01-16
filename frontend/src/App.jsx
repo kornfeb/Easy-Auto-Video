@@ -127,6 +127,23 @@ function ProjectDetail() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Asset Loading
+  const [assets, setAssets] = useState([]);
+  const [loadingAssets, setLoadingAssets] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_URL}/projects/${id}/assets`)
+      .then(res => res.json())
+      .then(data => {
+        setAssets(data);
+        setLoadingAssets(false);
+      })
+      .catch(err => {
+        console.error("Failed to load assets", err);
+        setLoadingAssets(false);
+      });
+  }, [id]);
+
   // Fetch all projects and find the matching one (Constraint: No backend change)
   useEffect(() => {
     fetch(`${API_URL}/projects`)
@@ -153,8 +170,9 @@ function ProjectDetail() {
     { name: 'log', icon: AlertCircle, desc: 'Process logs' }
   ];
 
+
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto pb-20">
       <Link to="/" className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-900 mb-6">
         <ArrowLeft size={20} /> Back to Dashboard
       </Link>
@@ -178,9 +196,9 @@ function ProjectDetail() {
       </header>
 
       <h2 className="text-xl font-semibold mb-4 text-gray-800">Project Workspace</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         {folders.map(f => (
-          <div key={f.name} className="bg-white p-4 rounded-lg border border-gray-200 flex items-center gap-3 opacity-75">
+          <div key={f.name} className="bg-white p-4 rounded-lg border border-gray-200 flex items-center gap-3 opacity-75 hover:opacity-100 transition-opacity cursor-default">
             <div className="p-2 bg-gray-100 rounded-md">
               <f.icon size={20} className="text-gray-600" />
             </div>
@@ -191,6 +209,38 @@ function ProjectDetail() {
           </div>
         ))}
       </div>
+
+      <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center justify-between">
+        <span>Input Assets</span>
+        <span className="text-sm font-normal text-gray-500">{assets.length} images</span>
+      </h2>
+
+      {loadingAssets ? (
+        <div className="py-8 text-center text-gray-400">Loading assets...</div>
+      ) : assets.length === 0 ? (
+        <div className="bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg p-10 text-center">
+          <p className="text-gray-500">No images found in /input folder.</p>
+          <p className="text-xs text-gray-400 mt-1">Place images manually into the folder to see them here.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {assets.map((asset) => (
+            <div key={asset.name} className="group relative bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+              <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
+                <img
+                  src={`${API_URL}${asset.url}`}
+                  alt={asset.name}
+                  className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                />
+              </div>
+              <div className="p-2 text-xs text-gray-600 truncate bg-white border-t border-gray-100">
+                {asset.name}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
     </div>
   );
 }
