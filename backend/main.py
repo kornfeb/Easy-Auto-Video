@@ -104,7 +104,7 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
     Mock pipeline execution.
     1. Updates project.json pipeline status.
     2. Writes to log/pipeline.log.
-    3. Returns updated status.
+    3. Handles specific logic for script_gen (mock).
     """
     project_path = os.path.join(PROJECTS_DIR, project_id)
     project_json_path = os.path.join(project_path, "project.json")
@@ -123,12 +123,41 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
     if "pipeline" not in data:
         data["pipeline"] = {}
         
-    # Mock Logic: Toggle status or Set to Completed
-    # user said "Updates step status (mock only)"
-    # I'll simply mark it as "completed" with a timestamp
     from datetime import datetime
     now = datetime.now().isoformat()
     
+    # --- Step Specific Logic ---
+    log_extra = ""
+    if request.step_name == "script_gen":
+        # Read product_name from input/product.json
+        product_name = None
+        product_json_path = os.path.join(project_path, "input", "product.json")
+        if os.path.exists(product_json_path):
+            try:
+                with open(product_json_path, 'r') as f:
+                    p_data = json.load(f)
+                    product_name = p_data.get("product_name")
+            except:
+                pass
+        
+        # Construct Prompt
+        prompt = "Task: Generate a catchy 15-second video script."
+        if product_name:
+            prompt += f" Mention the product '{product_name}' exactly once."
+        else:
+            prompt += " Focus on general appeal."
+        
+        # Mock Script Generation
+        mock_script = f"Hey check this out! {product_name if product_name else 'This amazing thing'} will change your life. Try it today!"
+        script_path = os.path.join(project_path, "script", "script.txt")
+        with open(script_path, 'w') as f:
+            f.write(mock_script)
+            
+        log_extra = f"[PROMPT] {prompt}\n"
+        log_extra += f"[{now}] [INFO] Generated script saved to script/script.txt\n"
+
+    # --- End Step Specific Logic ---
+
     data["pipeline"][request.step_name] = {
         "status": "completed",
         "updated_at": now
@@ -142,8 +171,10 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
         
-    log_file = os.path.join(log_dir, "pipeline.log") # Fixed extension
+    log_file = os.path.join(log_dir, "pipeline.log") 
     log_entry = f"[{now}] [INFO] JOB {request.step_name} started (MOCK)\n"
+    if log_extra:
+        log_entry += log_extra
     log_entry += f"[{now}] [INFO] JOB {request.step_name} completed successfully.\n"
     
     with open(log_file, 'a') as f:
