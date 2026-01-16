@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useParams, useNavigate } from 'react-router-dom';
-import { Plus, Folder, Clock, AlertCircle, ArrowLeft, FileVideo, FileAudio, FileText, HardDrive } from 'lucide-react';
+import { Plus, Folder, Clock, AlertCircle, ArrowLeft, FileVideo, FileAudio, FileText, HardDrive, Download } from 'lucide-react';
 
 const API_URL = 'http://localhost:8000';
 
@@ -10,6 +10,7 @@ function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newProjectId, setNewProjectId] = useState('');
+  const [newProductName, setNewProductName] = useState(''); // New state
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
 
@@ -38,10 +39,14 @@ function Dashboard() {
       const res = await fetch(`${API_URL}/projects/initialize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: newProjectId })
+        body: JSON.stringify({
+          project_id: newProjectId,
+          product_name: newProductName.trim() || null // Send optional name
+        })
       });
       if (res.ok) {
         setNewProjectId('');
+        setNewProductName('');
         fetchProjects();
       } else {
         alert("Failed to create project");
@@ -62,18 +67,28 @@ function Dashboard() {
       {/* Create Project Section */}
       <div className="bg-white p-6 rounded-lg shadow-sm mb-8 border border-gray-100">
         <h2 className="text-lg font-semibold mb-4 text-gray-700">Create New Project</h2>
-        <form onSubmit={handleCreate} className="flex gap-4">
-          <input
-            type="text"
-            value={newProjectId}
-            onChange={(e) => setNewProjectId(e.target.value)}
-            placeholder="Enter project ID (e.g., my_video_01)"
-            className="flex-1 px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-          />
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="flex gap-4">
+            <input
+              type="text"
+              value={newProjectId}
+              onChange={(e) => setNewProjectId(e.target.value)}
+              placeholder="Project ID (internal_id)"
+              className="flex-1 px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              required
+            />
+            <input
+              type="text"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+              placeholder="Product Name (optional)"
+              className="flex-1 px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
           <button
             type="submit"
             disabled={creating || !newProjectId}
-            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 font-medium"
+            className="w-full px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 font-medium"
           >
             {creating ? 'Creating...' : <><Plus size={20} /> Create Project</>}
           </button>
@@ -97,7 +112,8 @@ function Dashboard() {
             <div key={p.project_id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow flex justify-between items-center group">
               <div>
                 <h3 className="text-lg font-medium text-gray-900">{p.project_id}</h3>
-                <div className="flex gap-4 mt-1 text-sm text-gray-500">
+                <div className="text-sm text-blue-600 font-medium">{p.product_name || '-'}</div>
+                <div className="flex gap-4 mt-2 text-sm text-gray-500">
                   <span className="flex items-center gap-1">
                     <AlertCircle size={14} /> Status: {p.status}
                   </span>
@@ -131,7 +147,7 @@ function ProjectDetail() {
   const [assets, setAssets] = useState([]);
   const [loadingAssets, setLoadingAssets] = useState(true);
 
-  useEffect(() => {
+  const fetchAssets = () => {
     fetch(`${API_URL}/projects/${id}/assets`)
       .then(res => res.json())
       .then(data => {
@@ -142,7 +158,11 @@ function ProjectDetail() {
         console.error("Failed to load assets", err);
         setLoadingAssets(false);
       });
-  }, [id]);
+  };
+
+  useEffect(() => {
+    fetchAssets();
+  }, [id, project?.last_updated]);
 
   // Fetch logic
   const loadProject = () => {
@@ -184,7 +204,8 @@ function ProjectDetail() {
       <header className="bg-white p-6 rounded-lg shadow-sm border border-gray-100 mb-6">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">{project.project_id}</h1>
+            <h1 className="text-3xl font-bold text-gray-900 mb-1">{project.project_id}</h1>
+            <div className="text-lg text-blue-600 font-medium mb-3">{project.product_name || '-'}</div>
             <div className="flex gap-6 text-sm text-gray-500">
               <span className="flex items-center gap-2">
                 <AlertCircle size={16} className="text-blue-500" />
@@ -200,7 +221,7 @@ function ProjectDetail() {
       </header>
 
       <h2 className="text-xl font-semibold mb-4 text-gray-800">Project Workspace</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
         {folders.map(f => (
           <div key={f.name} className="bg-white p-4 rounded-lg border border-gray-200 flex items-center gap-3 opacity-75 hover:opacity-100 transition-opacity cursor-default">
             <div className="p-2 bg-gray-100 rounded-md">
@@ -213,6 +234,15 @@ function ProjectDetail() {
           </div>
         ))}
       </div>
+
+      {/* URL Image Downloader Section */}
+      <UrlImageDownloader
+        projectId={id}
+        onComplete={() => {
+          fetchAssets();
+          loadProject();
+        }}
+      />
 
       <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center justify-between">
         <span>Input Assets</span>
@@ -383,6 +413,80 @@ function LogViewer({ projectId, lastUpdated }) {
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function UrlImageDownloader({ projectId, onComplete }) {
+  const [urlList, setUrlList] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [results, setResults] = useState(null);
+
+  const handleDownload = async () => {
+    const urls = urlList.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+    if (urls.length === 0) return;
+
+    setDownloading(true);
+    setResults(null);
+
+    try {
+      const res = await fetch(`${API_URL}/projects/${projectId}/upload/urls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls })
+      });
+      const data = await res.json();
+      setResults(data.results);
+      if (data.success_count > 0) {
+        onComplete();
+      }
+    } catch (err) {
+      alert("Error during download process");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm mb-12">
+      <h3 className="text-lg font-semibold mb-2 text-gray-800 flex items-center gap-2">
+        <Download size={20} className="text-gray-500" /> Download Images via URL
+      </h3>
+      <p className="text-sm text-gray-500 mb-4">Paste image URLs (one per line). Supported: JPG, PNG, WEBP.</p>
+
+      <textarea
+        value={urlList}
+        onChange={(e) => setUrlList(e.target.value)}
+        placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.png"
+        className="w-full h-32 p-3 border rounded-md font-mono text-sm focus:ring-2 focus:ring-blue-500 outline-none mb-4"
+        disabled={downloading}
+      />
+
+      <button
+        onClick={handleDownload}
+        disabled={downloading || !urlList.trim()}
+        className="w-full py-2 bg-gray-800 text-white rounded-md hover:bg-black transition-colors disabled:opacity-50 font-medium flex items-center justify-center gap-2"
+      >
+        {downloading ? 'Downloading...' : 'Start Download'}
+      </button>
+
+      {results && (
+        <div className="mt-4 border-t pt-4">
+          <h4 className="text-sm font-semibold mb-2 text-gray-700">Results:</h4>
+          <ul className="space-y-1">
+            {results.map((r, i) => (
+              <li key={i} className="text-xs flex items-center gap-2">
+                {r.success ? (
+                  <span className="text-green-600">✓ Success: {r.filename}</span>
+                ) : (
+                  <span className="text-red-500">✗ Failed: {r.error}</span>
+                )}
+                <span className="text-gray-400 truncate flex-1">{r.url}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
