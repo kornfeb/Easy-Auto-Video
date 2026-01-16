@@ -64,6 +64,37 @@ def list_project_assets(project_id: str):
              
     return assets
 
+@app.get("/projects/{project_id}/logs")
+def get_project_logs(project_id: str):
+    """
+    Reads log files from /projects/{project_id}/log
+    Returns: { "lines": [string] }
+    Constraints: Limit to last 200 lines.
+    """
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    log_dir = os.path.join(project_path, "log")
+    
+    if not os.path.exists(log_dir):
+        return {"lines": []}
+    
+    all_lines = []
+    # Read all .log files (usually there's one main log or rotated logs)
+    # Sorting by modification time ensures chronological order broadly
+    log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
+    log_files.sort(key=lambda x: os.path.getmtime(os.path.join(log_dir, x)))
+    
+    for log_file in log_files:
+        try:
+            with open(os.path.join(log_dir, log_file), 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+                # Strip newlines for cleaner JSON
+                all_lines.extend([l.rstrip() for l in lines])
+        except Exception:
+            pass # Skip unreadable files
+            
+    # Return last 200 lines
+    return {"lines": all_lines[-200:]}
+
 class ProjectInitRequest(BaseModel):
     project_id: str
 

@@ -241,6 +241,75 @@ function ProjectDetail() {
         </div>
       )}
 
+      {/* Log Viewer Section */}
+      <LogViewer projectId={id} />
+
+    </div>
+  );
+}
+
+function LogViewer({ projectId }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('ALL'); // ALL, INFO, ERROR
+
+  useEffect(() => {
+    fetch(`${API_URL}/projects/${projectId}/logs`)
+      .then(res => res.json())
+      .then(data => {
+        setLogs(data.lines || []);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Failed to load logs", err);
+        setLoading(false);
+      });
+  }, [projectId]);
+
+  const filteredLogs = logs.filter(line => {
+    if (filter === 'ALL') return true;
+    return line.toUpperCase().includes(filter);
+  });
+
+  return (
+    <div className="mt-12">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+          <FileText size={24} className="text-gray-500" /> System Logs
+        </h2>
+        <div className="flex gap-2 text-sm">
+          {['ALL', 'INFO', 'ERROR'].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-3 py-1 rounded-md border ${filter === f
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-gray-900 rounded-lg p-4 font-mono text-sm text-gray-300 h-64 overflow-y-auto shadow-inner">
+        {loading ? (
+          <div className="text-center py-10 opacity-50">Loading logs...</div>
+        ) : filteredLogs.length === 0 ? (
+          <div className="text-center py-10 opacity-50">
+            {logs.length === 0 ? 'No log files found.' : 'No logs match filter.'}
+          </div>
+        ) : (
+          filteredLogs.map((line, i) => (
+            <div key={i} className={`whitespace-pre-wrap py-0.5 ${line.includes('ERROR') ? 'text-red-400' :
+                line.includes('WARNING') ? 'text-yellow-400' : 'text-gray-300'
+              }`}>
+              {line}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
