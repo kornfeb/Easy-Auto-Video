@@ -144,8 +144,8 @@ function ProjectDetail() {
       });
   }, [id]);
 
-  // Fetch all projects and find the matching one (Constraint: No backend change)
-  useEffect(() => {
+  // Fetch logic
+  const loadProject = () => {
     fetch(`${API_URL}/projects`)
       .then(res => res.json())
       .then(data => {
@@ -157,6 +157,10 @@ function ProjectDetail() {
         console.error(err);
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    loadProject();
   }, [id]);
 
   if (loading) return <div className="p-8 text-center">Loading details...</div>;
@@ -241,9 +245,78 @@ function ProjectDetail() {
         </div>
       )}
 
+      {/* Pipeline Section */}
+      <PipelineManager project={project} onUpdate={loadProject} />
+
       {/* Log Viewer Section */}
       <LogViewer projectId={id} />
 
+    </div>
+  );
+}
+
+function PipelineManager({ project, onUpdate }) {
+  const steps = [
+    { id: 'script_gen', label: 'Script Generation', icon: FileText },
+    { id: 'tts', label: 'Text-to-Speech', icon: FileAudio },
+    { id: 'video_stitch', label: 'Video Stitching', icon: FileVideo }
+  ];
+
+  const statuses = project.pipeline || {};
+
+  const handleRun = async (stepId) => {
+    try {
+      const res = await fetch(`${API_URL}/projects/${project.project_id}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step_name: stepId })
+      });
+      if (res.ok) {
+        onUpdate(); // Reload project to see new status and log
+      } else {
+        alert("Failed to run step");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error running step");
+    }
+  };
+
+  return (
+    <div className="mb-12">
+      <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center gap-2">
+        <Clock size={24} className="text-gray-500" /> Pipeline
+      </h2>
+      <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 shadow-sm">
+        {steps.map(step => {
+          const status = statuses[step.id]?.status || 'pending';
+          const lastRun = statuses[step.id]?.updated_at;
+
+          return (
+            <div key={step.id} className="p-4 flex items-center justify-between hover:bg-gray-50">
+              <div className="flex items-center gap-4">
+                <div className={`p-2 rounded-full ${status === 'completed' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'
+                  }`}>
+                  <step.icon size={20} />
+                </div>
+                <div>
+                  <div className="font-medium text-gray-900">{step.label}</div>
+                  <div className="text-xs text-gray-500">
+                    STATUS: <span className="uppercase font-semibold">{status}</span>
+                    {lastRun && ` • ${new Date(lastRun).toLocaleTimeString()}`}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => handleRun(step.id)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition"
+              >
+                {status === 'completed' ? 'Re-run' : 'Run Job'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -283,8 +356,8 @@ function LogViewer({ projectId }) {
               key={f}
               onClick={() => setFilter(f)}
               className={`px-3 py-1 rounded-md border ${filter === f
-                  ? 'bg-gray-800 text-white border-gray-800'
-                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                ? 'bg-gray-800 text-white border-gray-800'
+                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                 }`}
             >
               {f}
@@ -303,7 +376,7 @@ function LogViewer({ projectId }) {
         ) : (
           filteredLogs.map((line, i) => (
             <div key={i} className={`whitespace-pre-wrap py-0.5 ${line.includes('ERROR') ? 'text-red-400' :
-                line.includes('WARNING') ? 'text-yellow-400' : 'text-gray-300'
+              line.includes('WARNING') ? 'text-yellow-400' : 'text-gray-300'
               }`}>
               {line}
             </div>

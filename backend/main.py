@@ -95,6 +95,62 @@ def get_project_logs(project_id: str):
     # Return last 200 lines
     return {"lines": all_lines[-200:]}
 
+class PipelineStepRequest(BaseModel):
+    step_name: str
+
+@app.post("/projects/{project_id}/run")
+def run_pipeline_step(project_id: str, request: PipelineStepRequest):
+    """
+    Mock pipeline execution.
+    1. Updates project.json pipeline status.
+    2. Writes to log/pipeline.log.
+    3. Returns updated status.
+    """
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    project_json_path = os.path.join(project_path, "project.json")
+    log_dir = os.path.join(project_path, "log")
+    
+    if not os.path.exists(project_json_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 1. Update project.json
+    try:
+        with open(project_json_path, 'r') as f:
+            data = json.load(f)
+    except:
+        data = {"status": "unknown"}
+        
+    if "pipeline" not in data:
+        data["pipeline"] = {}
+        
+    # Mock Logic: Toggle status or Set to Completed
+    # user said "Updates step status (mock only)"
+    # I'll simply mark it as "completed" with a timestamp
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    
+    data["pipeline"][request.step_name] = {
+        "status": "completed",
+        "updated_at": now
+    }
+    data["last_updated"] = now
+    
+    with open(project_json_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    # 2. Append Log
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+        
+    log_file = os.path.join(log_dir, "pipeline.logs") # Using .logs to distinguish
+    log_entry = f"[{now}] [INFO] JOB {request.step_name} started (MOCK)\n"
+    log_entry += f"[{now}] [INFO] JOB {request.step_name} completed successfully.\n"
+    
+    with open(log_file, 'a') as f:
+        f.write(log_entry)
+        
+    return {"message": f"Step {request.step_name} completed", "pipeline": data["pipeline"]}
+
 class ProjectInitRequest(BaseModel):
     project_id: str
 
@@ -180,7 +236,8 @@ def list_projects():
                             "project_id": project_id,
                             "status": data.get("status", "unknown"),
                             "created_at": data.get("created_at"),
-                            "last_updated": data.get("last_updated")
+                            "last_updated": data.get("last_updated"),
+                            "pipeline": data.get("pipeline", {})
                         })
                 except Exception as e:
                     # Log error but skip this project to prevent crash (Constraint)
