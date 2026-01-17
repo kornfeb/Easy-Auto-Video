@@ -103,7 +103,7 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
             concat_nodes = []
             
             for i, seg in enumerate(segments):
-                img_path = os.path.join(input_dir, seg["image"])
+                img_path = os.path.abspath(os.path.join(input_dir, seg["image"]))
                 
                 # Handle Missing Images or Placeholders
                 if not os.path.exists(img_path):
@@ -141,7 +141,7 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
             xfade_chain_last = None
             
             for i, seg in enumerate(segments):
-                img_path = os.path.join(input_dir, seg["image"])
+                img_path = os.path.abspath(os.path.join(input_dir, seg["image"]))
                 
                 # Padding Logic
                 pad_start = transition_duration / 2 if i > 0 else 0

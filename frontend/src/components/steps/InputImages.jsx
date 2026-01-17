@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Image as ImageIcon, Type, Layout, Palette, AlignVerticalJustifyCenter, AlignVerticalJustifyStart, AlignVerticalJustifyEnd } from 'lucide-react';
+import { Download, Image as ImageIcon, Type, Layout, Palette, AlignVerticalJustifyCenter, AlignVerticalJustifyStart, AlignVerticalJustifyEnd, Mic, RefreshCw } from 'lucide-react';
 import { API_URL } from '../../config';
 
 function UrlImageDownloader({ projectId, onComplete }) {
@@ -179,7 +179,7 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
     const [activeTab, setActiveTab] = useState('image'); // 'image' | 'text'
     const [coverMode, setCoverMode] = useState('existing');
     const [previewUrl, setPreviewUrl] = useState(null);
-    const [isIntro, setIsIntro] = useState(false);
+    const [isIntro, setIsIntro] = useState(true);
     const [selectedAssetId, setSelectedAssetId] = useState(null);
     const [fetchingScript, setFetchingScript] = useState(false);
 
@@ -203,7 +203,8 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
             if (projectData.cover.file_path) {
                 setPreviewUrl(`${API_URL}/media/${projectId}/${projectData.cover.file_path}?t=${new Date().getTime()}`);
             }
-            setIsIntro(projectData.cover.use_as_intro || false);
+            // Default to true if undefined
+            setIsIntro(projectData.cover.use_as_intro !== undefined ? projectData.cover.use_as_intro : true);
 
             if (projectData.cover.source === 'existing' && projectData.cover.image_id) {
                 setSelectedAssetId(projectData.cover.image_id);
@@ -340,11 +341,19 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
                         <input
                             type="checkbox"
                             checked={isIntro}
-                            onChange={(e) => {
+                            onChange={async (e) => {
                                 const val = e.target.checked;
                                 setIsIntro(val);
-                                // Trigger update
-                                handleSetCover(projectData?.cover?.source || 'existing', projectData?.cover?.image_id, null);
+                                // Call separate endpoint just to update options
+                                try {
+                                    await fetch(`${API_URL}/projects/${projectId}/cover/options`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ use_as_intro: val })
+                                    });
+                                } catch (e) {
+                                    console.error("Failed to update intro option", e);
+                                }
                             }}
                             className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
                         />
@@ -364,6 +373,7 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
                             <div className="flex gap-2 bg-gray-50 p-1 rounded-lg inline-flex mb-4">
                                 <button onClick={() => setCoverMode('existing')} className={`px-4 py-2 rounded-md text-xs font-bold transition ${coverMode === 'existing' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'}`}>Existing Image</button>
                                 <button onClick={() => setCoverMode('upload')} className={`px-4 py-2 rounded-md text-xs font-bold transition ${coverMode === 'upload' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'}`}>Upload One</button>
+                                <button onClick={() => setCoverMode('ai')} className={`px-4 py-2 rounded-md text-xs font-bold transition ${coverMode === 'ai' ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-sm' : 'text-gray-400'}`}>✨ AI Generate</button>
                             </div>
 
                             {coverMode === 'existing' && (
@@ -395,6 +405,102 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
                                     </label>
                                 </div>
                             )}
+
+                            {coverMode === 'ai' && (
+                                <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                                    <h4 className="text-sm font-bold text-gray-700 mb-2">Generate AI Cover</h4>
+                                    <p className="text-xs text-gray-500 mb-4">Create a unique cover image using AI (DALL-E 3).</p>
+
+                                    <div className="flex justify-end mb-2">
+                                        <button
+                                            onClick={async () => {
+                                                const btn = document.getElementById('btn-magic-prompt');
+                                                const originalText = btn.innerHTML;
+                                                btn.innerHTML = `<span class="animate-spin">🔄</span> Thinking...`;
+                                                btn.disabled = true;
+
+                                                try {
+                                                    const prodName = projectData?.product_name || "Product";
+                                                    // Pick first image as reference if available
+                                                    let refImage = null;
+                                                    if (assets && assets.length > 0) {
+                                                        refImage = assets[0].name;
+                                                    }
+
+                                                    const res = await fetch(`${API_URL}/projects/${projectId}/cover/gen-prompt`, {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ product_name: prodName, image_filename: refImage })
+                                                    });
+                                                    const data = await res.json();
+                                                    if (data.error) throw new Error(data.error);
+
+                                                    // Update textarea
+                                                    const textArea = document.getElementById('ai-cover-prompt');
+                                                    textArea.value = data.prompt;
+
+                                                } catch (e) {
+                                                    alert("Prompt generation failed: " + e.message);
+                                                } finally {
+                                                    btn.innerHTML = originalText;
+                                                    btn.disabled = false;
+                                                }
+                                            }}
+                                            id="btn-magic-prompt"
+                                            className="text-[10px] bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-full font-bold hover:bg-indigo-200 flex items-center gap-1 transition"
+                                        >
+                                            <span role="img" aria-label="magic">✨</span> Auto-Write Prompt with AI
+                                        </button>
+                                    </div>
+
+                                    <textarea
+                                        className="w-full p-3 text-xs border rounded-lg mb-4 h-24 resize-none focus:ring-2 focus:ring-purple-500 outline-none"
+                                        placeholder="Describe your cover image... (e.g. Professional studio shot of a red silk scarf, luxury style, minimal background)"
+                                        id="ai-cover-prompt"
+                                    ></textarea>
+
+                                    <button
+                                        onClick={async () => {
+                                            const prompt = document.getElementById('ai-cover-prompt').value;
+                                            if (!prompt) return alert("Please enter a prompt");
+
+                                            // Loading state UI...
+                                            const btn = document.getElementById('btn-gen-cover');
+                                            const originalText = btn.innerText;
+                                            btn.innerText = "Generating...";
+                                            btn.disabled = true;
+
+                                            try {
+                                                const res = await fetch(`${API_URL}/projects/${projectId}/cover/gen-image`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ prompt })
+                                                });
+                                                const data = await res.json();
+                                                if (data.error) throw new Error(data.error);
+
+                                                // Refresh to show in existing or just set preview
+                                                setPreviewUrl(`${API_URL}${data.url}`);
+                                                // Ideally we should select it as 'existing' now, but for now just show preview and let user select from global assets if needed, 
+                                                // OR set it as cover immediately:
+                                                await handleSetCover('existing', data.filename);
+                                                // Switch mode to existing to show it selected? or stay here. Stay here is fine.
+
+                                            } catch (e) {
+                                                alert("Generation failed: " + e.message);
+                                            } finally {
+                                                btn.innerText = originalText;
+                                                btn.disabled = false;
+                                                onUpdate(); // Refresh asset list
+                                            }
+                                        }}
+                                        id="btn-gen-cover"
+                                        className="w-full py-2 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700 transition"
+                                    >
+                                        Generate Image
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -404,30 +510,58 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
                             {/* Content */}
                             <div className="space-y-4">
                                 <div>
-                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 flex justify-between">
-                                        <span>Title Text</span>
-                                        <button onClick={handleAutoScript} className="text-indigo-600 hover:underline" disabled={fetchingScript}>
-                                            {fetchingScript ? 'Fetching...' : 'Auto-fill from Script'}
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">Short Title (Hook)</label>
+                                        <button
+                                            onClick={async () => {
+                                                setFetchingScript(true);
+                                                try {
+                                                    // Use newly available product name from project data or just ask user?
+                                                    // We'll use a generic fallback or read from script step if possible.
+                                                    // For now, let's try to get product info from elsewhere or passed in props.
+                                                    // Assuming projectData has it, or we infer.
+                                                    const prodName = projectData?.product_name || "Product";
+
+                                                    const res = await fetch(`${API_URL}/projects/${projectId}/cover/gen-text`, {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ product_name: prodName, tone: "engaging" })
+                                                    });
+                                                    const data = await res.json();
+                                                    if (data.options && data.options.length > 0) {
+                                                        // Pick first or random? Let's pick first.
+                                                        const opt = data.options[0];
+                                                        handleOverlayChange('title', opt.title);
+                                                        handleOverlayChange('subtitle', opt.subtitle);
+                                                    }
+                                                } catch (e) { alert("Failed to generate hook"); }
+                                                setFetchingScript(false);
+                                            }}
+                                            className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold hover:bg-purple-200 flex items-center gap-1"
+                                            disabled={fetchingScript}
+                                        >
+                                            {fetchingScript ? <RefreshCw size={8} className="animate-spin" /> : <Mic size={8} />}
+                                            {fetchingScript ? 'Generating...' : 'Stop & Generate Hook'}
                                         </button>
-                                    </label>
+                                    </div>
                                     <input
                                         type="text"
                                         maxLength={40}
                                         value={overlay.title}
                                         onChange={(e) => handleOverlayChange('title', e.target.value)}
                                         className="w-full p-3 text-sm border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold"
-                                        placeholder="Enter Main Title..."
+                                        placeholder="E.g. Premium Silk Scarf"
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1">Subtitle (Optional)</label>
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1">Tagline (Optional)</label>
                                     <input
                                         type="text"
                                         maxLength={60}
                                         value={overlay.subtitle}
                                         onChange={(e) => handleOverlayChange('subtitle', e.target.value)}
                                         className="w-full p-3 text-sm border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                                        placeholder="Add a subtitle..."
+                                        placeholder="E.g. Soft. Elegant. Timeless."
                                     />
                                 </div>
                             </div>
@@ -491,6 +625,40 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
                                         <AlignVerticalJustifyEnd size={16} /> <span className="text-xs font-bold">Bottom</span>
                                     </button>
                                 </div>
+                            </div>
+
+                            {/* Action Button */}
+                            <div className="pt-4 border-t border-gray-200">
+                                <button
+                                    onClick={async () => {
+                                        const btn = document.getElementById('btn-save-timeline');
+                                        const originalText = btn.innerText;
+                                        btn.innerText = "Applying...";
+                                        btn.disabled = true;
+
+                                        try {
+                                            // 1. Save Text Overlay first (ensure current state is committed)
+                                            await submitOverlay(overlay);
+
+                                            // 2. Regenerate Timeline
+                                            const res = await fetch(`${API_URL}/projects/${projectId}/timeline/generate`, {
+                                                method: 'POST'
+                                            });
+                                            if (!res.ok) throw new Error("Timeline generation failed");
+
+                                            alert("✅ Cover saved and Timeline updated!");
+                                        } catch (e) {
+                                            alert("❌ Failed: " + e.message);
+                                        } finally {
+                                            btn.innerText = originalText;
+                                            btn.disabled = false;
+                                        }
+                                    }}
+                                    id="btn-save-timeline"
+                                    className="w-full py-3 bg-green-600 text-white rounded-lg font-bold shadow-sm hover:bg-green-700 transition flex items-center justify-center gap-2"
+                                >
+                                    <span role="img" aria-label="save">💾</span> Save Picture & Go to Regenerate Timeline
+                                </button>
                             </div>
                         </div>
                     )}

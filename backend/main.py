@@ -26,6 +26,10 @@ from core.logger import log_event
 from core.state import set_done # Import here
 from upload import downloader
 from core import step_registry
+from utils.cover_generator import (
+    CoverTextGenRequest, CoverImageGenRequest, CoverPromptGenRequest,
+    generate_cover_text_ai, generate_cover_image_ai, generate_cover_prompt_ai
+)
 
 app = FastAPI()
 
@@ -798,7 +802,30 @@ def set_project_cover(project_id: str, request: CoverSetRequest):
         from utils.image_processor import render_cover_overlay
         render_cover_overlay(project_path, text_overlay)
 
+
     return {"status": "OK", "cover_url": f"/media/{project_id}/{cover_filename}?t={datetime.now().timestamp()}"}
+
+class CoverOptionsRequest(BaseModel):
+    use_as_intro: bool
+
+@app.post("/projects/{project_id}/cover/options")
+def update_cover_options(project_id: str, request: CoverOptionsRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f: data = json.load(f)
+        
+        if "cover" not in data: data["cover"] = {}
+        data["cover"]["use_as_intro"] = request.use_as_intro
+        data["last_updated"] = datetime.now().isoformat()
+        
+        with open(json_path, 'w') as f: json.dump(data, f, indent=2)
+        
+    return {"status": "OK", "use_as_intro": request.use_as_intro}
+
 
 @app.post("/projects/{project_id}/cover/upload")
 async def upload_project_cover(project_id: str, file: UploadFile = File(...), use_as_intro: bool = False):
@@ -846,24 +873,67 @@ def render_cover_text(project_id: str, config: CoverOverlayConfig):
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
         
-    # Update Project JSON
-    json_path = os.path.join(project_path, "project.json")
-    if os.path.exists(json_path):
-        with open(json_path, 'r') as f: data = json.load(f)
-        
+    # Save config to project.json
+    project_json_path = os.path.join(project_path, "project.json")
+    try:
+        if os.path.exists(project_json_path):
+            with open(project_json_path, 'r') as f:
+                data = json.load(f)
+        else:
+            data = {}
+            
         if "cover" not in data: data["cover"] = {}
         data["cover"]["text_overlay"] = config.dict()
+        data["last_updated"] = datetime.now().isoformat()
         
-        with open(json_path, 'w') as f: json.dump(data, f, indent=2)
+        with open(project_json_path, 'w') as f:
+            json.dump(data, f, indent=2)
+    except:
+        pass
 
-    # Render
     from utils.image_processor import render_cover_overlay
     result = render_cover_overlay(project_path, config.dict())
     
-    if result.get("status") == "FAIL":
-        raise HTTPException(status_code=500, detail=result.get("error"))
+    if result["status"] == "FAIL":
+        raise HTTPException(status_code=500, detail=result["error"])
         
-    return {"status": "OK", "cover_url": f"/media/{project_id}/cover.jpg?t={datetime.now().timestamp()}"}
+    # Valid timestamp to bust cache
+    ts = int(datetime.now().timestamp())
+    return {"status": "OK", "cover_url": f"/media/{project_id}/cover.jpg?t={ts}"}
+
+@app.post("/projects/{project_id}/cover/gen-text")
+def generate_cover_text_endpoint(project_id: str, request: CoverTextGenRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    result = generate_cover_text_ai(project_path, request.product_name, request.tone)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+@app.post("/projects/{project_id}/cover/gen-image")
+def generate_cover_image_endpoint(project_id: str, request: CoverImageGenRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    result = generate_cover_image_ai(project_path, request.prompt)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+@app.post("/projects/{project_id}/cover/gen-prompt")
+def generate_cover_prompt_endpoint(project_id: str, request: CoverPromptGenRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    result = generate_cover_prompt_ai(project_path, request.product_name, request.image_filename)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
 
 
 if __name__ == "__main__":

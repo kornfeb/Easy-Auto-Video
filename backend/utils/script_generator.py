@@ -93,11 +93,11 @@ def generate_script(project_id, project_path):
     # 3. Resolve Prompt Variables
     # Supported: {{product_name}}, {{word_count}}, {{tone}}, {{cta}} (generic)
     # For now simply replace mostly product_name and word_count
-    final_prompt = prompt_template.replace("{{product_name}}", product_name)
-    final_prompt = final_prompt.replace("{{word_count}}", str(target_word_count))
-    final_prompt = final_prompt.replace("{{tone}}", "ตื่นเต้น น่าเชื่อถือ") 
-    final_prompt = final_prompt.replace("{{product_benefits}}", "คุณภาพดี ราคาคุ้มค่า")
-    final_prompt = final_prompt.replace("{{cta}}", "กดสั่งซื้อได้เลยที่ตะกร้า") 
+    final_prompt = prompt_template.replace("{{product_name}}", product_name).replace("{product_name}", product_name)
+    final_prompt = final_prompt.replace("{{word_count}}", str(target_word_count)).replace("{word_count}", str(target_word_count))
+    final_prompt = final_prompt.replace("{{tone}}", "ตื่นเต้น น่าเชื่อถือ").replace("{tone}", "ตื่นเต้น น่าเชื่อถือ")
+    final_prompt = final_prompt.replace("{{product_benefits}}", "คุณภาพดี ราคาคุ้มค่า").replace("{product_benefits}", "คุณภาพดี ราคาคุ้มค่า")
+    final_prompt = final_prompt.replace("{{cta}}", "กดสั่งซื้อได้เลยที่ตะกร้า").replace("{cta}", "กดสั่งซื้อได้เลยที่ตะกร้า") 
     
     # 3. Generation Logic with Auto-Regeneration
     max_attempts = 3
@@ -143,6 +143,9 @@ def generate_script(project_id, project_path):
     if not final_script:
         log_event(project_path, "pipeline.log", "[SCRIPT_GEN] All attempts failed, using emergency fallback")
         final_script = f"รีวิว {product_name} ของดีบอกต่อ. คุณภาพดี. ราคาคุ้มค่า. สั่งซื้อได้เลยครับ."
+    
+    # Post-process: Scrub explicit placeholders if AI outputted them literals (sanity check)
+    final_script = final_script.replace("{product_name}", product_name).replace("{{product_name}}", product_name)
 
     # 4. Save Output
     save_path = os.path.join(project_path, "script", "script.txt")
