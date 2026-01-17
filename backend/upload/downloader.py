@@ -18,6 +18,18 @@ def download_images_from_urls(project_id, urls):
     success_count = 0
     valid_exts = (".jpg", ".jpeg", ".png", ".webp")
     
+    # Analyze existing files to determine starting index
+    existing_files = os.listdir(input_dir)
+    max_idx = 0
+    for f in existing_files:
+        name_part = os.path.splitext(f)[0]
+        if name_part.isdigit():
+            val = int(name_part)
+            if val > max_idx:
+                max_idx = val
+                
+    current_index = max_idx + 1
+
     for url in urls:
         url = url.strip()
         if not url: continue
@@ -27,17 +39,20 @@ def download_images_from_urls(project_id, urls):
             response = requests.get(url, timeout=10, stream=True)
             response.raise_for_status()
             
+            # Use original extension or default to .jpg
             orig_filename = url.split("/")[-1].split("?")[0]
-            if not orig_filename or not any(orig_filename.lower().endswith(ext) for ext in valid_exts):
-                orig_filename = f"image_{uuid.uuid4().hex[:8]}.jpg"
+            _, ext = os.path.splitext(orig_filename)
+            if not ext or ext.lower() not in valid_exts:
+                ext = ".jpg"
             
-            base, ext = os.path.splitext(orig_filename)
-            final_filename = orig_filename
-            counter = 1
+            # Sequential Naming (1.jpg, 2.png, etc.)
+            final_filename = f"{current_index}{ext}"
+            
+            # Ensure uniqueness (though unlikely with sequential logic unless race condition)
             while os.path.exists(os.path.join(input_dir, final_filename)):
-                final_filename = f"{base}_{counter}{ext}"
-                counter += 1
-            
+                current_index += 1
+                final_filename = f"{current_index}{ext}"
+
             target_path = os.path.join(input_dir, final_filename)
             with open(target_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -46,6 +61,8 @@ def download_images_from_urls(project_id, urls):
             status["success"] = True
             status["filename"] = final_filename
             success_count += 1
+            current_index += 1 # Increment for next file
+            
         except Exception as e:
             status["error"] = str(e)
             

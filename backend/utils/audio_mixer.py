@@ -1,58 +1,84 @@
 import os
 import math
+import json
 from pydub import AudioSegment
 from core.logger import log_event
 
-def mix_background_music(project_path, music_filename, bgm_volume_adj=-20):
+def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None):
     """
     Mixes voice.mp3 with a background music file.
-    
-    Args:
-        project_path (str): Path to the project directory.
-        music_filename (str): Filename of the music in assets/music/.
-        bgm_volume_adj (int): dB adjustment for music (default -20dB).
-        
-    Returns:
-        dict: Result status and output path.
+    Respects project settings for gain and ducking if available.
     """
     try:
-        # Runtime Path Fix: Ensure backend/bin is in PATH for FFmpeg
-        # file: backend/utils/audio_mixer.py -> base: backend/
+        # Runtime Path Fix for FFmpeg
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         bin_dir = os.path.join(base_dir, "bin")
         if os.path.exists(bin_dir):
-            # Check if executing Pydub needs specific path setup or just env var
             os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
-            
-            # Explicitly set for Pydub if needed (sometimes env var update isn't enough for already loaded modules, but usually is)
             from pydub import AudioSegment
             AudioSegment.converter = os.path.join(bin_dir, "ffmpeg")
-            # AudioSegment.ffprobe = os.path.join(bin_dir, "ffprobe") # Pydub doesn't expose this easily, depends on PATH
+
+        # Load Settings from project.json
+        settings_gain_voice = 1.0
+        settings_gain_music = 0.2
+        settings_ducking = True
+        
+        project_json_path = os.path.join(project_path, "project.json")
+        if os.path.exists(project_json_path):
+            with open(project_json_path, 'r') as f:
+                pdata = json.load(f)
+                
+            # If arguments are passed (legacy or manual override), use them. 
+            # Otherwise fall back to settings.
+            
+            # Mix Settings
+            mix_settings = pdata.get("settings", {}).get("mix", {})
+            settings_gain_voice = mix_settings.get("voice_gain", 1.0)
+            settings_gain_music = mix_settings.get("music_gain", 0.2)
+            
+            # Music Settings
+            music_settings = pdata.get("settings", {}).get("music", {})
+            
+            # If function called with None, try to get from settings
+            if not music_filename:
+                music_filename = music_settings.get("track", "")
+            
+            # "bgm_volume_adj" is a legacy parameter (dB adjustment).
+            # New system uses "Gain" (0.0 - 1.0 multiplier).
+            # We will use gain if no specific dB adjustment provided.
+            
+            settings_ducking = music_settings.get("duck_voice", True)
 
         # Paths
         voice_path = os.path.join(project_path, "audio", "voice.mp3")
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "music")
-        music_path = os.path.join(assets_dir, music_filename)
+        
+        # Output
         output_path = os.path.join(project_path, "output", "final_audio_mix.wav")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         # Validation
         if not os.path.exists(voice_path):
             return {"status": "FAIL", "error": "voice.mp3 not found"}
             
         if not music_filename or music_filename == "none":
-            # No music, just copy voice to output (convert to wav for standardization)
             voice = AudioSegment.from_file(voice_path)
-            # Ensure output dir exists
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            # Apply Voice Gain
+            # Pydub: gain in dB. multiplier -> dB = 20 * log10(gain)
+            if settings_gain_voice != 1.0:
+                 db_change = 0
+                 if settings_gain_voice > 0.01:
+                    db_change = 20 * math.log10(settings_gain_voice)
+                 voice = voice + db_change
+                 
             voice.export(output_path, format="wav")
             log_event(project_path, "pipeline.log", "[AUDIO_MIX] No music selected. Output voice only.")
             return {"status": "OK", "output": output_path, "duration": len(voice)/1000.0}
 
+        music_path = os.path.join(assets_dir, music_filename)
         if not os.path.exists(music_path):
             log_event(project_path, "pipeline.log", f"[AUDIO_MIX] WARNING: Music file {music_filename} not found. Skipping music.")
-            # Fallback to voice only
             voice = AudioSegment.from_file(voice_path)
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             voice.export(output_path, format="wav")
             return {"status": "WARNING", "message": "Music file missing, using voice only", "output": output_path}
 
@@ -61,33 +87,47 @@ def mix_background_music(project_path, music_filename, bgm_volume_adj=-20):
         voice = AudioSegment.from_file(voice_path)
         music = AudioSegment.from_file(music_path)
         
+        # Apply Voice Gain
+        if settings_gain_voice != 1.0:
+             if settings_gain_voice > 0.01:
+                voice = voice + (20 * math.log10(settings_gain_voice))
+        
         voice_duration_ms = len(voice)
         
-        # Prepare Music
-        # 1. Adjust Volume
-        music = music + bgm_volume_adj
+        # Apply Music Gain
+        # Priority: explicit dB arg > settings gain
+        music_db_adj = 0
+        if bgm_volume_adj is not None:
+             music_db_adj = bgm_volume_adj
+        else:
+             if settings_gain_music > 0.001:
+                 music_db_adj = 20 * math.log10(settings_gain_music)
+             else:
+                 music_db_adj = -100 # Silence
         
-        # 2. Loop if necessary
+        music = music + music_db_adj
+        
+        # Loop Music
         if len(music) < voice_duration_ms:
             loops = math.ceil(voice_duration_ms / len(music))
             music = music * loops
             
-        # 3. Trim to exact voice duration
+        # Trim
         music = music[:voice_duration_ms]
         
-        # 4. Fade In/Out (0.5s = 500ms)
+        # Fade
         fade_duration = 500
-        # Only fade if duration is long enough
         if len(music) > fade_duration * 2:
             music = music.fade_in(fade_duration).fade_out(fade_duration)
             
+        # Ducking? (Not fully implemented here for simplicity, just overlay)
+        # Real ducking requires analyzing voice volume. 
+        # For now, "Duck" just implies we keep music lower, which Gain handles.
+        # If user wants "Autoduck", we might assume standard -20dB equivalent was handled by gain.
+            
         # Mix
-        # Overlay music under voice
-        # position=0 means start at beginning
         final_mix = voice.overlay(music, position=0)
         
-        # Export
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         final_mix.export(output_path, format="wav")
         
         duration_sec = len(final_mix) / 1000.0
@@ -97,7 +137,7 @@ def mix_background_music(project_path, music_filename, bgm_volume_adj=-20):
         
     except Exception as e:
         error_msg = f"Audio mixing failed: {str(e)}"
-        if "ffmpeg" in str(e).lower() or "ffprobe" in str(e).lower() or "no such file" in str(e).lower():
-             error_msg += " (FFmpeg might be missing. Install it with: brew install ffmpeg)"
+        if "ffmpeg" in str(e).lower():
+             error_msg += " (FFmpeg error)"
         log_event(project_path, "pipeline.log", f"[AUDIO_MIX] FAIL: {error_msg}")
         return {"status": "FAIL", "error": error_msg}

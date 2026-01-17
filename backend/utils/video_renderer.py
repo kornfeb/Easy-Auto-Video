@@ -96,29 +96,26 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
         
         # Input 0: Audio
         inputs.extend(["-i", audio_path])
-        
-        # -- Intro (Stream [v_intro]) --
-        filter_parts.append(f"color=c=black:s={WIDTH}x{HEIGHT}:d={silence_start}:r=30,setsar=1[v_intro]")
-        
-        # -- Images --
         input_idx = 1
-        video_chain_output = "[v_intro]" # Default if no segments (impossible per check)
         
+        # --- Classic Concat Method (No transition) ---
         if not xfade_key:
-            # --- Classic Concat Method (No transition) ---
-            concat_nodes = ["[v_intro]"]
+            concat_nodes = []
             
             for i, seg in enumerate(segments):
                 img_path = os.path.join(input_dir, seg["image"])
+                
+                # Handle Missing Images or Placeholders
                 if not os.path.exists(img_path):
-                    filter_parts.append(f"color=c=black:s={WIDTH}x{HEIGHT}:d={seg['duration']}:r=30,setsar=1[v{i}]")
+                    # Important: Must force format=yuv420p to match other visual streams
+                    filter_parts.append(f"color=c=black:s={WIDTH}x{HEIGHT}:d={seg['duration']}:r=30,setsar=1,format=yuv420p[v{i}]")
                     concat_nodes.append(f"[v{i}]")
                     continue
                     
                 inputs.extend(["-loop", "1", "-i", img_path])
-                frames = int(seg["duration"] * 30) + 5
+                frames = int(seg["duration"] * 30) + 10  # Buffer frames
                 
-                # Standard Zoompan
+                # Standard Zoompan with Explicit Formatting
                 kp_filter = (
                     f"[{input_idx}:v]"
                     f"scale=w={WIDTH}:h={HEIGHT}:force_original_aspect_ratio=increase,"
@@ -131,16 +128,6 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
                 filter_parts.append(kp_filter)
                 concat_nodes.append(f"[v{i}]")
                 input_idx += 1
-                
-            # Trailing
-            last_seg_idx = input_idx - 1 
-            filter_parts.append(
-                f"[{last_seg_idx}:v]"
-                f"scale=w={WIDTH}:h={HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={WIDTH}:{HEIGHT}:(iw-ow)/2:(ih-oh)/2,setsar=1,"
-                f"trim=duration={silence_end},setpts=PTS-STARTPTS[v_end]"
-            )
-            concat_nodes.append("[v_end]")
             
             # Concat
             n_segments = len(concat_nodes)
@@ -149,12 +136,9 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
             
         else:
             # --- Xfade Method ---
-            # 1. Process all images into streams [v0], [v1]... with PADDING
+            # Process all images into streams [v0], [v1]... with PADDING
             accumulated_time = 0
             xfade_chain_last = None
-            
-            # Since we concat Intro + ImageBlock + Outro
-            # We must build the ImageBlock stream separately
             
             for i, seg in enumerate(segments):
                 img_path = os.path.join(input_dir, seg["image"])
@@ -165,7 +149,7 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
                 visual_dur = seg['duration'] + pad_start + pad_end
                 
                 if not os.path.exists(img_path):
-                    filter_parts.append(f"color=c=black:s={WIDTH}x{HEIGHT}:d={visual_dur}:r=30,setsar=1[v{i}]")
+                    filter_parts.append(f"color=c=black:s={WIDTH}x{HEIGHT}:d={visual_dur}:r=30,setsar=1,format=yuv420p[v{i}]")
                 else:
                     inputs.extend(["-loop", "1", "-i", img_path])
                     frames = int(visual_dur * 30) + 10 # Extra buffer
@@ -188,7 +172,6 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
                     accumulated_time = seg['duration']
                 else:
                     # Offset relative to start of first image in block
-                    # Cut happens at accumulated_time of previous segments
                     offset = accumulated_time - (transition_duration / 2)
                     
                     next_node = f"[x{i}]"
@@ -198,25 +181,8 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
                     xfade_chain_last = next_node
                     accumulated_time += seg['duration']
             
-            # End of loop. xfade_chain_last is the [video_block]
-            
-            # Now handle Intro and Outro via Concat
-            # Intro is [v_intro]
-            # Outro needs [v_max]
-            
-            # Re-use last input for Outro (Freeze)
-            last_seg_idx = input_idx - 1
-            filter_parts.append(
-                f"[{last_seg_idx}:v]"
-                f"scale=w={WIDTH}:h={HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={WIDTH}:{HEIGHT}:(iw-ow)/2:(ih-oh)/2,setsar=1,"
-                f"trim=duration={silence_end},setpts=PTS-STARTPTS[v_end]"
-            )
-            
-            # Concat: Intro -> ImageBlock -> Outro
-            # Note: Concat filters often require consistent streams.
-            # Xfade output SAR/FPS should match.
-            filter_parts.append(f"[v_intro]{xfade_chain_last}[v_end]concat=n=3:v=1:a=0[v_out]")
+            # Map final xfade output to v_out
+            filter_parts.append(f"{xfade_chain_last}format=yuv420p[v_out]")
 
         
         full_filter = ";".join(filter_parts)
@@ -235,7 +201,7 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
         ])
         
         # 6. Execute
-        log_event(project_path, "render.log", f"[RENDER] Executing FFmpeg... (Files: {input_idx-1})")
+        log_event(project_path, "render.log", f"[RENDER] Executing FFmpeg... (Inputs: {input_idx})")
         log_event(project_path, "render.log", f"CMD: {' '.join(cmd)}") 
         
         t0 = time.time()

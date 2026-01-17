@@ -31,12 +31,12 @@ def call_gemini_api(prompt, product_name):
             return None
             
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         
-        # Format prompt with product name
-        formatted_prompt = prompt.replace("{product_name}", product_name)
+        # Format prompt with product name (simple replacement, but template handles more)
+        # Note: 'prompt' here is already the fully resolved prompt from generate_script
         
-        response = model.generate_content(formatted_prompt)
+        response = model.generate_content(prompt)
         
         if response and response.text:
             return response.text.strip()
@@ -50,21 +50,35 @@ def generate_script(project_id, project_path):
     """
     Generate a video review script using Gemini AI.
     Includes auto-regeneration if the script doesn't meet constraints.
-    
-    Target: 30-45 Thai words (~120-180 characters)
-    Duration: ~20 seconds of speech
+    Reads settings from project.json for template and word count target.
     """
-    # 1. Load Prompt Template
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    prompt_path = os.path.join(base_dir, "script", "prompt.txt")
     
-    if not os.path.exists(prompt_path):
-        log_event(project_path, "pipeline.log", "[ERROR] Script prompt file missing")
-        return None, False
+    # Defaults
+    target_word_count = 40
+    prompt_template = ""
+    
+    # 1. Load Settings
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        try:
+            with open(project_json_path, 'r') as f:
+                pdata = json.load(f)
+                script_settings = pdata.get("settings", {}).get("script", {})
+                target_word_count = script_settings.get("word_count", 40)
+                prompt_template = script_settings.get("template", "")
+        except:
+            pass
 
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        prompt_template = f.read()
-        
+    # Fallback to file prompt if template is empty
+    if not prompt_template:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        prompt_path = os.path.join(base_dir, "script", "prompt.txt")
+        if os.path.exists(prompt_path):
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+        else:
+            prompt_template = "เขียนบทโฆษณาสำหรับ {{product_name}} ความยาว {{word_count}} คำ เน้นความน่าสนใจ"
+
     # 2. Get Product Information
     product_name = "สินค้ายอดนิยม"
     product_json = os.path.join(project_path, "input", "product.json")
@@ -74,18 +88,31 @@ def generate_script(project_id, project_path):
                 data = json.load(f)
                 product_name = data.get("product_name", product_name)
         except Exception as e:
-            log_event(project_path, "pipeline.log", f"[WARNING] Failed to read product.json: {str(e)}")
-            
+             log_event(project_path, "pipeline.log", f"[WARNING] Failed to read product.json: {str(e)}")
+             
+    # 3. Resolve Prompt Variables
+    # Supported: {{product_name}}, {{word_count}}, {{tone}}, {{cta}} (generic)
+    # For now simply replace mostly product_name and word_count
+    final_prompt = prompt_template.replace("{{product_name}}", product_name)
+    final_prompt = final_prompt.replace("{{word_count}}", str(target_word_count))
+    final_prompt = final_prompt.replace("{{tone}}", "ตื่นเต้น น่าเชื่อถือ") 
+    final_prompt = final_prompt.replace("{{product_benefits}}", "คุณภาพดี ราคาคุ้มค่า")
+    final_prompt = final_prompt.replace("{{cta}}", "กดสั่งซื้อได้เลยที่ตะกร้า") 
+    
     # 3. Generation Logic with Auto-Regeneration
     max_attempts = 3
     final_script = ""
     is_ok = False
     
-    log_event(project_path, "pipeline.log", f"[SCRIPT_GEN] Starting generation for: {product_name}")
+    # Acceptable range: +/- 20%
+    min_words = int(target_word_count * 0.8)
+    max_words = int(target_word_count * 1.2)
+    
+    log_event(project_path, "pipeline.log", f"[SCRIPT_GEN] Starting generation for: {product_name} (Target: {target_word_count} words)")
     
     for attempt in range(1, max_attempts + 1):
         # Try Gemini API first
-        current_script = call_gemini_api(prompt_template, product_name)
+        current_script = call_gemini_api(final_prompt, product_name)
         
         # Fallback to mock if Gemini fails
         if not current_script:
@@ -99,8 +126,8 @@ def generate_script(project_id, project_path):
         log_event(project_path, "pipeline.log", 
                  f"[SCRIPT_GEN] Attempt {attempt}: {char_count} chars, {word_count} words")
         
-        # Check if within acceptable range (30-45 words)
-        if 30 <= word_count <= 45:
+        # Check if within acceptable range
+        if min_words <= word_count <= max_words:
             log_event(project_path, "pipeline.log", 
                      f"[SCRIPT_GEN] Attempt {attempt}: ✓ ACCEPTED")
             final_script = current_script
@@ -108,9 +135,12 @@ def generate_script(project_id, project_path):
             break
         else:
             log_event(project_path, "pipeline.log", 
-                     f"[SCRIPT_GEN] Attempt {attempt}: ✗ OUT OF RANGE (target: 30-45 words)")
+                     f"[SCRIPT_GEN] Attempt {attempt}: ✗ OUT OF RANGE (target: {min_words}-{max_words} words)")
+            # Retry logic could modify prompt to be shorter/longer but for now just retry
+            if attempt == max_attempts:
+                 final_script = current_script # Accept best effort
 
-    if not is_ok:
+    if not final_script:
         log_event(project_path, "pipeline.log", "[SCRIPT_GEN] All attempts failed, using emergency fallback")
         final_script = f"รีวิว {product_name} ของดีบอกต่อ. คุณภาพดี. ราคาคุ้มค่า. สั่งซื้อได้เลยครับ."
 

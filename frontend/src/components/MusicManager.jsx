@@ -4,9 +4,9 @@ import { API_URL } from '../config';
 
 export default function MusicManager({ projectId, lastUpdated, projectData, onUpdate }) {
     const [musicFiles, setMusicFiles] = useState([]);
-    const [selectedMusic, setSelectedMusic] = useState('none');
-    const [enabled, setEnabled] = useState(false);
-    const [volume, setVolume] = useState(-20);
+    const [selectedMusic, setSelectedMusic] = useState('carefree.mp3');
+    const [enabled, setEnabled] = useState(true);
+    const [volume, setVolume] = useState(-16);
     const [mixing, setMixing] = useState(false);
 
     useEffect(() => {
@@ -16,10 +16,20 @@ export default function MusicManager({ projectId, lastUpdated, projectData, onUp
             .then(data => setMusicFiles(data));
 
         // Load config from project data
-        if (projectData.music_config) {
-            setSelectedMusic(projectData.music_config.music_file || 'none');
-            setEnabled(projectData.music_config.enabled);
-            setVolume(projectData.music_config.volume_adj || -20);
+        if (projectData && projectData.music_config) {
+            setSelectedMusic(projectData.music_config.music_file || 'carefree.mp3');
+            // If explicit enabled param exists use it, otherwise default to true
+            if (projectData.music_config.enabled !== undefined) {
+                setEnabled(projectData.music_config.enabled);
+            } else {
+                setEnabled(true);
+            }
+            setVolume(projectData.music_config.volume_adj || -16);
+        } else {
+            // Defaults for new projects
+            setSelectedMusic('carefree.mp3');
+            setEnabled(true);
+            setVolume(-16);
         }
     }, [projectId, projectData]);
 

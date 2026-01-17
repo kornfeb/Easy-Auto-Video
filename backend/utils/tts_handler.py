@@ -116,6 +116,7 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
     """
     Generates a voice audio file using real TTS services.
     Validates output integrity before confirming success.
+    Reads global defaults for pauses and silence from project.json
     """
     audio_dir = os.path.join(project_path, "audio")
     os.makedirs(audio_dir, exist_ok=True)
@@ -124,6 +125,28 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
     filename = f"voice---{profile_id}---{speed}---{timestamp}.mp3"
     audio_file = os.path.join(audio_dir, filename)
     
+    # Load Project Settings
+    pause_breathing = True
+    silence_start = 1.5
+    silence_end = 1.5
+    
+    project_json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(project_json_path):
+        try:
+            with open(project_json_path, 'r') as f:
+                pdata = json.load(f)
+                settings = pdata.get("settings", {})
+                
+                # Breathing Pause
+                pause_breathing = settings.get("voice", {}).get("breathing_pause", True)
+                
+                # Silence Padding
+                video_settings = settings.get("video", {})
+                silence_start = video_settings.get("intro_silence", 1.5)
+                silence_end = video_settings.get("outro_silence", 1.5)
+        except:
+            pass
+
     # Provider/Voice Resolution
     active_provider = provider
     active_voice = voice_name
@@ -138,6 +161,9 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
     encoding_method = active_provider
 
     try:
+        # Save to temporary file first
+        temp_file = audio_file + ".raw.mp3"
+            
         if active_provider == "gtts":
             # gTTS uses lang as voice essentially
             lang = active_voice if len(active_voice) <= 5 else "th"
@@ -151,29 +177,8 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
                      f"[TTS] Script: {char_count} Thai chars, {word_count} words, est. {word_count * 0.5:.1f}s")
             
             tts = gTTS(text=clean_text, lang=lang, slow=is_slow)
-            
-            # Save to temporary file first
-            temp_file = audio_file + ".raw.mp3"
             tts.save(temp_file)
             
-            # Apply audio processing
-            from utils.audio_processor import add_silence_padding, add_sentence_pauses
-            
-            # Step 1: Add sentence pauses
-            pause_file = audio_file + ".paused.mp3"
-            add_sentence_pauses(temp_file, pause_file, script_content, 
-                              pause_duration=0.4, project_path=project_path)
-            
-            # Step 2: Add silence padding
-            add_silence_padding(pause_file, audio_file, 
-                              start_silence=1.5, end_silence=1.5, project_path=project_path)
-            
-            # Clean up temp files
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            if os.path.exists(pause_file):
-                os.remove(pause_file)
-        
         elif active_provider == "openai":
             client = get_openai_client()
             if client:
@@ -190,35 +195,44 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
                     speed=speed
                 )
                 
-                # Save to temporary file first
-                temp_file = audio_file + ".raw.mp3"
                 if hasattr(response, 'write_to_file'):
                     response.write_to_file(temp_file)
                 else:
                     response.stream_to_file(temp_file)
-                
-                # Apply audio processing
-                from utils.audio_processor import add_silence_padding, add_sentence_pauses
-                
-                # Step 1: Add sentence pauses
-                pause_file = audio_file + ".paused.mp3"
-                add_sentence_pauses(temp_file, pause_file, script_content, 
-                                  pause_duration=0.4, project_path=project_path)
-                
-                # Step 2: Add silence padding
-                add_silence_padding(pause_file, audio_file, 
-                                  start_silence=1.5, end_silence=1.5, project_path=project_path)
-                
-                # Clean up temp files
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                if os.path.exists(pause_file):
-                    os.remove(pause_file)
             else:
                 raise ValueError("OpenAI API Key missing")
         else:
             raise ValueError(f"Unknown provider: {active_provider}")
             
+        # Apply audio processing
+        from utils.audio_processor import add_silence_padding, add_sentence_pauses
+        
+        # Step 1: Add sentence pauses -> saves to pause_file
+        pause_file = audio_file + ".paused.mp3"
+        
+        if pause_breathing:
+            add_sentence_pauses(temp_file, pause_file, script_content, 
+                              pause_duration=0.4, project_path=project_path)
+            source_for_padding = pause_file if os.path.exists(pause_file) and os.path.getsize(pause_file) > 100 else temp_file
+        else:
+            source_for_padding = temp_file
+        
+        # Step 2: Add silence padding -> saves to FINAL audio_file
+        success = add_silence_padding(source_for_padding, audio_file, 
+                          start_silence=silence_start, end_silence=silence_end, project_path=project_path)
+                          
+        if not success:
+             # Fallback: copy raw source to final
+             shutil.copy2(source_for_padding, audio_file)
+
+        # Cleanup
+        if os.path.exists(temp_file):
+            try: os.remove(temp_file)
+            except: pass
+        if os.path.exists(pause_file):
+             try: os.remove(pause_file)
+             except: pass
+
         # Integrity Check
         if not os.path.exists(audio_file) or os.path.getsize(audio_file) < 1024:
             raise ValueError("Generated file is too small or missing")
@@ -230,22 +244,27 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
         error_detail = str(e)
         log_event(project_path, "pipeline.log", f"[VOICE_GENERATE] [FAIL] {filename}: {error_detail}")
         if os.path.exists(audio_file):
-            os.remove(audio_file)
+            try: os.remove(audio_file)
+            except: pass
         return {"status": "FAIL", "error": error_detail}
 
     # Finalize
     duration = get_actual_duration(audio_file)
     if duration == 0:
         log_event(project_path, "pipeline.log", f"[VOICE_GENERATE] [WARNING] {filename} has 0 duration. Deleting.")
-        os.remove(audio_file)
+        try: os.remove(audio_file)
+        except: pass
         return {"status": "FAIL", "error": "Duration detected as 0"}
 
     # Update default voice.mp3
     default_voice = os.path.join(audio_dir, "voice.mp3")
-    shutil.copy2(audio_file, default_voice)
+    try:
+        shutil.copy2(audio_file, default_voice)
+    except:
+        pass
     
     log_event(project_path, "pipeline.log", 
-             f"[VOICE_GENERATE] [OK] {filename} | Actual: {duration}s | Method: {encoding_method} | Speed: {speed} | Padding: 1.5s+1.5s")
+             f"[VOICE_GENERATE] [OK] {filename} | Actual: {duration}s | Method: {encoding_method} | Speed: {speed} | Padding: {silence_start}s+{silence_end}s")
     
     return {
         "status": status,
@@ -299,12 +318,7 @@ def list_voice_files(project_path, project_id):
                 "duration": actual_dur,
                 "url": f"/media/{project_id}/audio/{f}"
             })
-        elif f == "voice_processed.mp3":
-            files.append({
-                "filename": f,
-                "label": "PROCESSED_VOICE",
-                "duration": actual_dur,
-                "url": f"/media/{project_id}/audio/{f}"
-            })
     
-    return sorted(files, key=lambda x: x.get('timestamp', '0'), reverse=True)
+    # Sort by timestamp descending
+    files.sort(key=lambda x: x.get("timestamp", "0"), reverse=True)
+    return files

@@ -4,9 +4,6 @@ import subprocess
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-
-
-# Load environment variables from .env file
 load_dotenv()
 
 import mimetypes
@@ -14,7 +11,7 @@ mimetypes.init()
 mimetypes.add_type('audio/mpeg', '.mp3')
 mimetypes.add_type('audio/wav', '.wav')
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -46,6 +43,83 @@ app.add_middleware(
 # Assets
 app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
+# --- SETTINGS MODELS ---
+class ScriptSettings(BaseModel):
+    template: str = """เขียนบทโฆษณาสั้นๆ สไตล์ {{tone}} สำหรับสินค้า "{{product_name}}"
+เน้นจุดเด่นเรื่อง: {{product_benefits}}
+ปิดท้ายด้วยคำเชิญชวน: "{{cta}}"
+ใช้ประโยคกระชับ เข้าใจง่าย น่าสนใจ
+ความยาวประมาณ {{word_count}} คำ"""
+    word_count: int = 40
+
+class VideoSettings(BaseModel):
+    duration: int = 20
+    intro_silence: float = 1.5
+    outro_silence: float = 1.5
+
+class VoiceSettings(BaseModel):
+    provider: str = "openai"
+    profile: str = "alloy"
+    speed: float = 1.0
+    breathing_pause: bool = True
+
+class MusicSettings(BaseModel):
+    track: str = "" # Default none or select first available
+    volume: float = 0.2
+    duck_voice: bool = True
+
+class MixSettings(BaseModel):
+    voice_gain: float = 1.0
+    music_gain: float = 0.2
+
+class ProjectSettings(BaseModel):
+    script: ScriptSettings = ScriptSettings()
+    video: VideoSettings = VideoSettings()
+    voice: VoiceSettings = VoiceSettings()
+    music: MusicSettings = MusicSettings()
+    mix: MixSettings = MixSettings()
+
+# --- SETTINGS ENDPOINTS ---
+@app.get("/projects/{project_id}/settings")
+def get_project_settings(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    json_path = os.path.join(project_path, "project.json")
+    if not os.path.exists(json_path):
+        return ProjectSettings().dict()
+
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    
+    # Return existing settings or default
+    return data.get("settings", ProjectSettings().dict())
+
+@app.post("/projects/{project_id}/settings")
+def update_project_settings(project_id: str, settings: ProjectSettings):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+    else:
+        # Should normally exist, but fallback
+        data = project_utils.initialize_project_structure(project_id)
+        
+    data["settings"] = settings.dict()
+    data["last_updated"] = datetime.now().isoformat()
+    
+    with open(json_path, 'w') as f:
+        json.dump(data, f, indent=2)
+        
+    return {"status": "OK", "settings": data["settings"]}
+
+# --- EXISTING ENDPOINTS ---
 
 @app.get("/voice/profiles")
 def get_voice_profiles():
@@ -637,6 +711,160 @@ def upload_urls(project_id: str, request: BulkUrlUploadRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return result
+
+# --- Cover Image Management ---
+class CoverOverlayConfig(BaseModel):
+    title: str = ""
+    subtitle: str = ""
+    position: str = "bottom"
+    font: str = "Thai_Default"
+    weight: str = "regular"
+    color: str = "#FFFFFF"
+    background: str = "none"
+
+class CoverSetRequest(BaseModel):
+    source: str  # "existing", "upload", "url"
+    image_id: Optional[str] = None
+    url: Optional[str] = None
+    use_as_intro: bool = False
+
+@app.post("/projects/{project_id}/cover/set")
+def set_project_cover(project_id: str, request: CoverSetRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    cover_filename = "cover.jpg" # Standardize name
+    cover_path = os.path.join(project_path, cover_filename)
+    
+    # 1. Handle Image Source
+    if request.source == "existing":
+        if not request.image_id:
+            raise HTTPException(status_code=400, detail="image_id required for existing source")
+        
+        src_path = os.path.join(project_path, "input", request.image_id)
+        if not os.path.exists(src_path):
+             raise HTTPException(status_code=404, detail="Source image not found")
+        
+        # Copy to cover path AND source path
+        import shutil
+        shutil.copy2(src_path, cover_path)
+        shutil.copy2(src_path, os.path.join(project_path, "cover_source.jpg"))
+        
+    elif request.source == "url":
+        if not request.url:
+            raise HTTPException(status_code=400, detail="URL required")
+            
+        # Download
+        import requests
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(request.url, headers=headers, stream=True, timeout=10)
+            response.raise_for_status()
+            
+            with open(cover_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            shutil.copy2(cover_path, os.path.join(project_path, "cover_source.jpg"))
+
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download image: {str(e)}")
+            
+    # 2. Update Project Metadata
+    json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f: data = json.load(f)
+        
+        # Restore text overlay if exists
+        text_overlay = data.get("cover", {}).get("text_overlay", {})
+        
+        data["cover"] = {
+            "source": request.source,
+            "image_id": request.image_id,
+            "file_path": cover_filename,
+            "use_as_intro": request.use_as_intro,
+            "text_overlay": text_overlay,
+            "updated_at": datetime.now().isoformat()
+        }
+        data["last_updated"] = datetime.now().isoformat()
+        
+        with open(json_path, 'w') as f: json.dump(data, f, indent=2)
+
+    # Re-render text if exists
+    if text_overlay.get("title") or text_overlay.get("subtitle"):
+        from utils.image_processor import render_cover_overlay
+        render_cover_overlay(project_path, text_overlay)
+
+    return {"status": "OK", "cover_url": f"/media/{project_id}/{cover_filename}?t={datetime.now().timestamp()}"}
+
+@app.post("/projects/{project_id}/cover/upload")
+async def upload_project_cover(project_id: str, file: UploadFile = File(...), use_as_intro: bool = False):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    cover_filename = "cover.jpg"
+    cover_path = os.path.join(project_path, cover_filename)
+    
+    try:
+        contents = await file.read()
+        with open(cover_path, "wb") as f:
+            f.write(contents)
+            
+        import shutil
+        shutil.copy2(cover_path, os.path.join(project_path, "cover_source.jpg"))
+            
+        # Update metadata
+        json_path = os.path.join(project_path, "project.json")
+        if os.path.exists(json_path):
+            with open(json_path, 'r') as f: data = json.load(f)
+            
+            text_overlay = data.get("cover", {}).get("text_overlay", {})
+            
+            data["cover"] = {
+                "source": "upload",
+                "image_id": None,
+                "file_path": cover_filename,
+                "use_as_intro": use_as_intro,
+                "text_overlay": text_overlay,
+                "updated_at": datetime.now().isoformat()
+            }
+            data["last_updated"] = datetime.now().isoformat()
+            
+            with open(json_path, 'w') as f: json.dump(data, f, indent=2)
+            
+        return {"status": "OK", "cover_url": f"/media/{project_id}/{cover_filename}?t={datetime.now().timestamp()}"}
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.post("/projects/{project_id}/cover/render-text")
+def render_cover_text(project_id: str, config: CoverOverlayConfig):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Update Project JSON
+    json_path = os.path.join(project_path, "project.json")
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f: data = json.load(f)
+        
+        if "cover" not in data: data["cover"] = {}
+        data["cover"]["text_overlay"] = config.dict()
+        
+        with open(json_path, 'w') as f: json.dump(data, f, indent=2)
+
+    # Render
+    from utils.image_processor import render_cover_overlay
+    result = render_cover_overlay(project_path, config.dict())
+    
+    if result.get("status") == "FAIL":
+        raise HTTPException(status_code=500, detail=result.get("error"))
+        
+    return {"status": "OK", "cover_url": f"/media/{project_id}/cover.jpg?t={datetime.now().timestamp()}"}
+
 
 if __name__ == "__main__":
     import uvicorn
