@@ -189,3 +189,98 @@ def render_cover_overlay(project_path, overlay_config):
     img.save(final_path, quality=95)
     
     return {"status": "OK", "file": "cover.jpg"}
+
+def hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+def resize_image_logic(img, target_width, target_height, mode="fit", bg_color="#FFA500"):
+    """
+    Core logic for resizing a single PIL Image.
+    mode: 'fit' (pad with color), 'fill' (crop center)
+    """
+    original_ratio = img.width / img.height
+    target_ratio = target_width / target_height
+    
+    bg_rgb = hex_to_rgb(bg_color)
+    new_img = Image.new("RGB", (target_width, target_height), bg_rgb)
+    
+    if mode == "fill":
+        # Crop Strategy
+        if original_ratio > target_ratio:
+            # Image is wider than target -> Crop sides
+            scale_height = target_height
+            scale_width = int(scale_height * original_ratio)
+        else:
+            # Image is taller/same -> Crop top/bottom
+            scale_width = target_width
+            scale_height = int(scale_width / original_ratio)
+            
+        img_resized = img.resize((scale_width, scale_height), Image.LANCZOS)
+        
+        # Center Crop
+        left = (scale_width - target_width) // 2
+        top = (scale_height - target_height) // 2
+        
+        new_img.paste(img_resized, (-left, -top))
+        
+    else:
+        # Fit Strategy (Pad)
+        if original_ratio > target_ratio:
+            # Image is wider -> Fit width, pad height
+            scale_width = target_width
+            scale_height = int(scale_width / original_ratio)
+        else:
+            # Image is taller -> Fit height, pad width
+            scale_height = target_height
+            scale_width = int(scale_height * original_ratio)
+            
+        img_resized = img.resize((scale_width, scale_height), Image.LANCZOS)
+        
+        # Center Place
+        x = (target_width - scale_width) // 2
+        y = (target_height - scale_height) // 2
+        
+        new_img.paste(img_resized, (x, y))
+        
+    return new_img
+
+def process_batch_images(project_path, image_names, config):
+    """
+    Batch process images: resize, crop, pad.
+    config: {
+        "width": 1080,
+        "height": 1920,
+        "mode": "fit", # or "fill"
+        "bg_color": "#FFA500"
+    }
+    """
+    input_dir = os.path.join(project_path, "input")
+    results = []
+    
+    target_w = int(config.get("width", 1080))
+    target_h = int(config.get("height", 1920))
+    mode = config.get("mode", "fit")
+    bg_color = config.get("bg_color", "#FFA500")
+    
+    for name in image_names:
+        img_path = os.path.join(input_dir, name)
+        if not os.path.exists(img_path):
+            results.append({"name": name, "status": "FAIL", "error": "File not found"})
+            continue
+            
+        try:
+            with Image.open(img_path) as img:
+                img = img.convert("RGB") # Ensure RGB
+                processed_img = resize_image_logic(
+                    img, target_w, target_h, mode, bg_color
+                )
+                
+                # Overwrite
+                processed_img.save(img_path, quality=95)
+                results.append({"name": name, "status": "OK"})
+                
+        except Exception as e:
+            results.append({"name": name, "status": "FAIL", "error": str(e)})
+            
+    return results

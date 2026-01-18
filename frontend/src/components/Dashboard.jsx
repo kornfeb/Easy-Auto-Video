@@ -8,6 +8,8 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [newProjectId, setNewProjectId] = useState('');
     const [newProductName, setNewProductName] = useState('');
+    const [newImageUrls, setNewImageUrls] = useState('');
+    const [newProductUrl, setNewProductUrl] = useState('');
     const [creating, setCreating] = useState(false);
     const navigate = useNavigate();
 
@@ -29,21 +31,32 @@ export default function Dashboard() {
 
     const handleCreate = async (e) => {
         e.preventDefault();
-        if (!newProjectId.trim()) return;
+        // Required fields: ID, Name, ImageURLs
+        if (!newProjectId.trim() || !newProductName.trim() || !newImageUrls.trim()) {
+            alert("Please fill in all required fields marked with *");
+            return;
+        }
 
         setCreating(true);
         try {
+            // Split URLs by newline and filter empty
+            const imageUrlsArray = newImageUrls.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+
             const res = await fetch(`${API_URL}/projects/initialize`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     project_id: newProjectId,
-                    product_name: newProductName.trim() || null
+                    product_name: newProductName.trim(),
+                    product_url: newProductUrl.trim() || null, // Optional
+                    image_urls: imageUrlsArray
                 })
             });
             if (res.ok) {
                 setNewProjectId('');
                 setNewProductName('');
+                setNewImageUrls('');
+                setNewProductUrl('');
                 fetchProjects();
             } else {
                 alert("Failed to create project");
@@ -74,33 +87,61 @@ export default function Dashboard() {
                 <h2 className="text-xl font-bold mb-6 text-gray-800 flex items-center gap-2 relative z-10">
                     <Plus size={24} className="text-blue-500" /> Start New Project
                 </h2>
-                <form onSubmit={handleCreate} className="flex gap-4 relative z-10">
-                    <div className="flex-1 space-y-1">
-                        <input
-                            type="text"
-                            value={newProjectId}
-                            onChange={(e) => setNewProjectId(e.target.value)}
-                            placeholder="Project Identifier (e.g. shoppee-promo-1)"
-                            className="w-full px-5 py-3 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-medium text-gray-700 placeholder:text-gray-300"
+                <form onSubmit={handleCreate} className="flex flex-col gap-4 relative z-10">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Project ID <span className="text-red-500">*</span></label>
+                            <input
+                                type="text"
+                                value={newProjectId}
+                                onChange={(e) => setNewProjectId(e.target.value)}
+                                placeholder="e.g. shoppee-promo-1"
+                                className="w-full px-5 py-3 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-medium text-gray-700 placeholder:text-gray-300"
+                                required
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-gray-500 uppercase">Product Name <span className="text-red-500">*</span></label>
+                            <input
+                                type="text"
+                                value={newProductName}
+                                onChange={(e) => setNewProductName(e.target.value)}
+                                placeholder="e.g. Super Blender 3000"
+                                className="w-full px-5 py-3 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-medium text-gray-700 placeholder:text-gray-300"
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase">Product Image URLs (One per line) <span className="text-red-500">*</span></label>
+                        <textarea
+                            value={newImageUrls}
+                            onChange={(e) => setNewImageUrls(e.target.value)}
+                            placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.png"
+                            className="w-full h-32 px-5 py-3 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-medium text-gray-700 placeholder:text-gray-300 resize-y font-mono text-xs"
                             required
                         />
                     </div>
-                    <div className="flex-1 space-y-1">
+
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase">Product Landing Page (Optional)</label>
                         <input
                             type="text"
-                            value={newProductName}
-                            onChange={(e) => setNewProductName(e.target.value)}
-                            placeholder="Product Name (Optional)"
+                            value={newProductUrl}
+                            onChange={(e) => setNewProductUrl(e.target.value)}
+                            placeholder="e.g. https://shopee.co.th/product/..."
                             className="w-full px-5 py-3 border border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all font-medium text-gray-700 placeholder:text-gray-300"
                         />
                     </div>
+
                     <button
                         type="submit"
-                        disabled={creating || !newProjectId}
-                        className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+                        disabled={creating}
+                        className="w-full py-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 font-bold shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-sm uppercase tracking-wider"
                     >
                         {creating ? <Loader2 className="animate-spin" /> : <Plus size={20} />}
-                        {creating ? 'Creating...' : 'Create'}
+                        {creating ? 'Initialize Project & Assets...' : 'Start Project'}
                     </button>
                 </form>
             </div>

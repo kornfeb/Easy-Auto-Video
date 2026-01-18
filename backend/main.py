@@ -35,10 +35,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -230,7 +227,7 @@ def generate_project_timeline(project_id: str):
     project_path = os.path.join(PROJECTS_DIR, project_id)
     result = build_timeline(project_path)
     if result.get("status") == "FAIL":
-        raise HTTPException(status_code=400, detail=result.get("error"))
+        raise HTTPException(status_code=400, detail=result)
     
     timestamp_update(project_path)
     return result
@@ -382,22 +379,69 @@ def list_project_assets(project_id: str):
 def get_project_logs(project_id: str):
     return project_utils.get_project_logs(project_id)
 
-@app.get("/projects/{project_id}/logs/download")
-def download_project_logs(project_id: str):
-    project_path = os.path.join(PROJECTS_DIR, project_id)
-    log_file = os.path.join(project_path, "log", "pipeline.log")
-    
-    if not os.path.exists(log_file):
-        raise HTTPException(
-            status_code=404, 
-            detail="Log file not found. Run pipeline steps first."
-        )
-        
     return FileResponse(
         path=log_file,
         filename=f"{project_id}_pipeline.log",
         media_type="text/plain"
     )
+
+class ImageProcessRequest(BaseModel):
+    images: list[str] = [] # List of filenames or empty for 'all'
+    process_all: bool = False
+    width: int = 1080
+    height: int = 1920
+    mode: str = "fit" # fit, fill
+    bg_color: str = "#FFA500"
+
+@app.post("/projects/{project_id}/images/process")
+def process_project_images(project_id: str, request: ImageProcessRequest):
+    from utils.image_processor import process_batch_images
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    
+    target_images = request.images
+    if request.process_all:
+        # Get all images from input dir
+        input_dir = os.path.join(project_path, "input")
+        if os.path.exists(input_dir):
+            valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
+            target_images = [
+                f for f in os.listdir(input_dir) if any(f.lower().endswith(ext) for ext in valid_exts)
+            ]
+        else:
+             target_images = []
+             
+    if not target_images:
+        raise HTTPException(status_code=400, detail="No images selected")
+        
+    config = {
+        "width": request.width,
+        "height": request.height,
+        "mode": request.mode,
+        "bg_color": request.bg_color
+    }
+    
+    results = process_batch_images(project_path, target_images, config)
+    timestamp_update(project_path)
+    return {"results": results}
+
+@app.post("/projects/{project_id}/upload/image")
+def upload_project_image(project_id: str, file: UploadFile = File(...)):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    input_dir = os.path.join(project_path, "input")
+    os.makedirs(input_dir, exist_ok=True)
+    
+    file_path = os.path.join(input_dir, file.filename)
+    
+    try:
+        with open(file_path, "wb") as f:
+            while content := file.file.read(1024 * 1024):
+                f.write(content)
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+         
+    # timestamp_update(project_path) # Optional context update
+    
+    return {"status": "OK", "filename": file.filename}
 
 # Pipeline
 class PipelineStepRequest(BaseModel):
@@ -483,17 +527,100 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
         
     return {"message": f"Step {request.step_name} completed", "pipeline": data["pipeline"]}
 
+# --- Async Pipeline Extensions ---
+from core.pipeline_runner import PipelineRunner
+runner = PipelineRunner()
+
+@app.post("/projects/{project_id}/pipeline/start")
+def start_pipeline_job(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    success, msg = runner.start_job(project_id, project_path)
+    if not success:
+        raise HTTPException(status_code=409, detail=msg)
+    
+    return {"status": "started", "message": msg}
+
+@app.get("/projects/{project_id}/pipeline/status")
+def get_pipeline_status(project_id: str):
+    job = runner.get_job(project_id)
+    if not job:
+        # If no active job in memory, try detailed history? 
+        # For now return idle or null. Prompt says "Shows real-time progress".
+        # If the job finished a long time ago and server restarted, memory is gone.
+        # But frontend can rely on project.json for 'static' state.
+        # However, for the "Progress UI", we want the active job state.
+        return {"status": "idle"}
+    return job
+
+@app.post("/projects/{project_id}/pipeline/cancel")
+def cancel_pipeline_job(project_id: str):
+    if runner.cancel_job(project_id):
+        return {"status": "cancelled"}
+    raise HTTPException(status_code=404, detail="No active running job found")
+
 # Project Management
 class ProjectInitRequest(BaseModel):
     project_id: str
     product_name: str = None
+    product_url: str = None
+    image_urls: list[str] = []
 
 @app.post("/projects/initialize")
 def init_project(request: ProjectInitRequest):
     try:
-        return project_utils.initialize_project_structure(request.project_id, request.product_name)
+        data = project_utils.initialize_project_structure(request.project_id, request.product_name)
+        
+        # Save product_url if provided
+        project_path = os.path.join(PROJECTS_DIR, request.project_id)
+        updates_needed = False
+        
+        if request.product_url:
+            data["product_url"] = request.product_url
+            updates_needed = True
+
+        if request.image_urls:
+             # Trigger download immediately
+             from upload.downloader import download_images_from_urls
+             download_images_from_urls(request.project_id, request.image_urls)
+        
+        if updates_needed:
+            json_path = os.path.join(project_path, "project.json")
+            with open(json_path, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+        return data
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+class ProjectUpdateRequest(BaseModel):
+    product_name: Optional[str] = None
+    product_url: Optional[str] = None
+
+@app.put("/projects/{project_id}")
+def update_project(project_id: str, request: ProjectUpdateRequest):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    json_path = os.path.join(project_path, "project.json")
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    if request.product_name is not None:
+        data["product_name"] = request.product_name
+    
+    if request.product_url is not None:
+        data["product_url"] = request.product_url
+    
+    data["last_updated"] = datetime.now().isoformat()
+    
+    with open(json_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    return {"status": "ok", "project": data}
 
 @app.post("/projects/{project_id}/run/auto")
 def run_pipeline_auto(project_id: str):

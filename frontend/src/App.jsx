@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Dashboard from './components/Dashboard';
 import ProjectLayout from './components/ProjectLayout';
+import TestSandbox from './TestSandbox';
 
 function App() {
   return (
@@ -9,6 +10,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/project/:id" element={<ProjectLayout />} />
+        <Route path="/sandbox/image-editor" element={<TestSandbox />} />
       </Routes>
     </div>
   );

@@ -79,87 +79,100 @@ export default function ScriptEditor({ projectId, lastUpdated, projectData, onUp
     const status = projectData.pipeline?.script_gen?.status || 'PENDING';
 
     return (
-        <div className="max-w-5xl mx-auto">
-            <div className="flex justify-between items-center mb-6">
+        <div className="max-w-5xl mx-auto space-y-8">
+            <div className="flex justify-between items-end border-b border-gray-100 pb-6">
                 <div>
-                    <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
-                        <FileText size={28} className="text-blue-600" /> Video Script
+                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
+                        <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><FileText size={24} /></div>
+                        Video Script
                     </h2>
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className="text-sm text-gray-500 mt-2 ml-12">
                         Review and edit the script that will be narrated by AI.
                     </p>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase border ${status === 'MANUAL_EDIT' ? 'bg-orange-50 text-orange-600 border-orange-200' :
-                        status === 'completed' ? 'bg-green-50 text-green-600 border-green-200' :
+                <div className="flex items-center gap-3 mb-1">
+                    <span className={`text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide border ${status === 'MANUAL_EDIT' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                        status === 'completed' ? 'bg-green-50 text-green-700 border-green-200' :
                             'bg-gray-50 text-gray-500 border-gray-200'
                         }`}>
                         {status === 'completed' ? 'Auto-Generated' : status === 'MANUAL_EDIT' ? 'Modified' : status}
                     </span>
-                    <span className="text-sm text-gray-500 font-medium whitespace-nowrap bg-gray-100 px-3 py-1 rounded-full">{wordCount} words (~{Math.round(wordCount * 0.5)}s)</span>
+                    <span className="text-xs text-gray-600 font-bold bg-gray-100 px-3 py-1.5 rounded-full border border-gray-200">
+                        {wordCount} words <span className="text-gray-400 font-normal ml-1">(~{Math.round(wordCount * 0.5)}s)</span>
+                    </span>
+                </div>
+            </div>
 
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                {/* Toolbar */}
+                <div className="bg-gray-50 border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Script Content</div>
                     {!isEditing ? (
-                        <div className="flex gap-2">
+                        <div className="flex gap-3">
                             <button
                                 onClick={handleGenerate}
                                 disabled={generating}
-                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 px-5 h-10 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-indigo-700 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                {generating ? <RotateCcw size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                                {generating ? 'Generating...' : 'Gen Script'}
+                                {generating ? <RotateCcw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                                {generating ? 'Generating...' : 'Auto-Generate'}
                             </button>
 
                             <button
                                 onClick={() => setIsEditing(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-bold rounded-lg hover:bg-gray-50 transition shadow-sm"
+                                className="flex items-center gap-2 px-5 h-10 bg-white border border-gray-300 text-gray-700 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-gray-50 transition shadow-sm"
                             >
-                                <FileEdit size={16} /> Edit
+                                <FileEdit size={14} /> Edit Mode
                             </button>
                         </div>
                     ) : (
-                        <div className="flex gap-2">
+                        <div className="flex gap-3">
                             <button
                                 onClick={() => setIsEditing(false)}
                                 disabled={saving}
-                                className="px-4 py-2 text-gray-500 text-sm font-bold rounded-lg hover:bg-gray-100 transition"
+                                className="px-5 h-10 text-gray-500 text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-gray-100 transition"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleSave}
                                 disabled={saving}
-                                className="flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-bold rounded-lg hover:bg-green-700 transition shadow-md"
+                                className="flex items-center gap-2 px-6 h-10 bg-green-600 text-white text-xs font-bold uppercase tracking-wide rounded-lg hover:bg-green-700 transition shadow-md"
                             >
-                                <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
+                                <Save size={14} /> {saving ? 'Saving...' : 'Save Changes'}
                             </button>
                         </div>
                     )}
                 </div>
-            </div>
 
-            <div className={`bg-white rounded-xl border-2 transition-all ${isEditing ? 'border-indigo-300 shadow-xl ring-4 ring-indigo-50/50' : 'border-gray-100 shadow-sm'}`}>
                 {loading ? (
-                    <div className="p-12 text-center text-gray-400 text-sm flex flex-col items-center gap-2">
-                        <div className="animate-spin text-blue-500"><FileText size={24} /></div>
+                    <div className="p-20 text-center text-gray-400 text-sm flex flex-col items-center gap-3">
+                        <div className="animate-spin text-blue-500"><FileText size={32} /></div>
                         Loading script...
                     </div>
                 ) : isEditing ? (
                     <textarea
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
-                        className="w-full p-8 text-lg font-medium text-gray-800 outline-none min-h-[400px] leading-relaxed resize-y rounded-xl"
+                        className="w-full p-8 text-lg font-medium text-gray-800 outline-none min-h-[500px] leading-relaxed resize-y bg-white focus:bg-blue-50/10 transition-colors"
                         placeholder="Write your video script here..."
                         autoFocus
                     />
                 ) : (
-                    <div className="p-8 text-lg font-medium text-gray-800 whitespace-pre-wrap leading-relaxed min-h-[200px]">
-                        {content || <span className="italic text-gray-400 text-base flex flex-col items-center justify-center h-40 border-2 border-dashed border-gray-100 rounded-lg">No script generated yet.<br /><span className="text-xs mt-2 text-gray-300">Run 'Gen Script' to generate automatically from images.</span></span>}
+                    <div className="p-8 text-lg font-medium text-gray-800 whitespace-pre-wrap leading-relaxed min-h-[300px] bg-white">
+                        {content || (
+                            <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-gray-100 rounded-xl bg-gray-50/50 text-center">
+                                <div className="p-4 bg-gray-100 rounded-full mb-3 text-gray-300"><FileText size={32} /></div>
+                                <span className="text-gray-500 font-bold text-sm">No script generated yet.</span>
+                                <span className="text-gray-400 text-xs mt-1 max-w-xs">Use the "Auto-Generate" button to create a script from your product images.</span>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
-            <p className="mt-3 text-xs text-gray-400 italic text-center">
-                * Word count is estimated as Thai characters divided by 4. Target for 15s is ~30 words.
+            <p className="text-xs text-center text-gray-400 font-medium">
+                * Word count estimate: Thai characters / 4. Target duration ~15s (30-40 words).
             </p>
         </div>
     );

@@ -126,13 +126,31 @@ def list_assets(project_id):
     if not os.path.exists(target_dir):
         return []
     assets = []
-    valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm"}
+    
+    import re
+    def natural_sort_key(s):
+        # Extract number from start if possible for "1.jpg", "2.jpg" sorting
+        # Or from anywhere if you prefer standard natural sort
+        # Let's target the "index properties" typically used here (start of string)
+        match = re.search(r"(\d+)", s)
+        if match:
+            return int(match.group(1))
+        return 999999 # Put non-numbered files at the end
+    
     for item in os.listdir(target_dir):
         if any(item.lower().endswith(ext) for ext in valid_exts):
+             fpath = os.path.join(target_dir, item)
+             size = os.path.getsize(fpath)
              assets.append({
                  "name": item,
-                 "url": f"/media/{project_id}/input/{item}"
+                 "url": f"/media/{project_id}/input/{item}",
+                 "size": size,
+                 "sort_key": natural_sort_key(item)
              })
+    
+    # Sort by the extracted number, then by name for tie-breaking
+    assets.sort(key=lambda x: (x["sort_key"], x["name"]))
     return assets
 
 def get_project_logs(project_id):

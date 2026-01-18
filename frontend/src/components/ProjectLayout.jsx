@@ -16,6 +16,7 @@ import RenderValidator from './RenderValidator';
 import VideoRenderer from './VideoRenderer';
 import LogViewer from './steps/LogViewer';
 import SettingsManager from './steps/SettingsManager';
+import PipelineOrchestrator from './PipelineOrchestrator';
 
 const NAV_ITEMS = [
     { id: 'section-images', label: 'Images', icon: ImageIcon },
@@ -134,16 +135,75 @@ export default function ProjectLayout() {
                         </div>
                         <div>
                             <h1 className="text-sm font-bold text-gray-900 leading-tight">{project.project_id}</h1>
-                            {project.product_name && <p className="text-[10px] text-gray-500 max-w-[200px] truncate">{project.product_name}</p>}
+                            <input
+                                type="text"
+                                className="text-[10px] text-gray-500 max-w-[200px] truncate bg-transparent border-none p-0 focus:ring-0 placeholder-gray-300 hover:text-gray-700 transition-colors w-full"
+                                placeholder="Click to name product..."
+                                defaultValue={project.product_name || ""}
+                                onBlur={async (e) => {
+                                    const newVal = e.target.value.trim();
+                                    if (newVal === project.product_name) return; // No change
+
+                                    try {
+                                        // Update Local
+                                        const updatedProject = { ...project, product_name: newVal };
+                                        setProject(updatedProject);
+
+                                        // Persist
+                                        await fetch(`${API_URL}/projects/${id}`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ product_name: newVal })
+                                        });
+                                        // Silent success (no popup)
+                                    } catch (err) {
+                                        console.error("Failed to update product name", err);
+                                    }
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') e.target.blur();
+                                }}
+                            />
+
+                            {/* Product URL Input */}
+                            <div className="flex items-center gap-1 mt-0.5 max-w-[200px]">
+                                <span className="text-gray-300 flex-shrink-0">🔗</span>
+                                <input
+                                    type="text"
+                                    className="text-[9px] text-blue-500 max-w-full truncate bg-transparent border-none p-0 focus:ring-0 placeholder-gray-300 hover:bg-gray-50 transition-colors w-full"
+                                    placeholder="Add Product URL..."
+                                    defaultValue={project.product_url || ""}
+                                    onBlur={async (e) => {
+                                        const newVal = e.target.value.trim();
+                                        if (newVal === (project.product_url || "")) return;
+
+                                        try {
+                                            const updatedProject = { ...project, product_url: newVal };
+                                            setProject(updatedProject);
+
+                                            await fetch(`${API_URL}/projects/${id}`, {
+                                                method: 'PUT',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ product_url: newVal })
+                                            });
+                                        } catch (err) {
+                                            console.error("Failed to update URL", err);
+                                        }
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') e.target.blur();
+                                    }}
+                                />
+                            </div>
+
                         </div>
                     </div>
                 </div>
 
-                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase border tracking-wide ${project.status === 'completed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                    <div className={`w-2 h-2 rounded-full ${project.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-                    {project.status || 'unknown'}
-                </div>
+                <PipelineOrchestrator projectId={project.project_id} projectStatus={project.status} onUpdate={loadProject} />
             </header>
+
+
 
             {/* 2. Main Two-Column Layout */}
             <div className="flex flex-1 overflow-hidden">

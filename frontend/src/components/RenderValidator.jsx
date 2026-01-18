@@ -27,54 +27,60 @@ export default function RenderValidator({ projectId }) {
     };
 
     return (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Header */}
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="max-w-6xl mx-auto space-y-8">
+            <div className="flex justify-between items-end border-b border-gray-100 pb-6">
                 <div>
-                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                        <ShieldCheck size={24} className="text-indigo-500" /> Dry Run Validation
+                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
+                        <div className="p-2 bg-teal-50 text-teal-600 rounded-lg">
+                            <ShieldCheck size={24} />
+                        </div>
+                        Dry Run Validation
                     </h2>
-                    <p className="text-sm text-gray-500 mt-1">Ensure all assets are ready before final rendering.</p>
+                    <p className="text-sm text-gray-500 mt-2 ml-11">Ensure all assets are ready before final rendering.</p>
                 </div>
 
-                <button
-                    onClick={runCheck}
-                    disabled={checking}
-                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {checking ? <RotateCcw size={16} className="animate-spin" /> : <Play size={16} />}
-                    {checking ? 'Running Check...' : 'Run Diagnostics'}
-                </button>
+                <div className="flex gap-3">
+                    <button
+                        onClick={runCheck}
+                        disabled={checking}
+                        className="flex items-center gap-2 px-6 h-12 bg-gray-900 text-white rounded-xl text-xs font-bold uppercase tracking-wide hover:bg-black disabled:opacity-50 transition shadow-lg active:scale-95"
+                    >
+                        {checking ? <RotateCcw size={16} className="animate-spin" /> : <Play size={16} />}
+                        {checking ? 'Running Check...' : 'Run Diagnostics'}
+                    </button>
+                </div>
             </div>
 
-            {/* Content */}
-            <div className="p-6">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 min-h-[400px]">
                 {!report && !checking && (
-                    <div className="text-center py-12 text-gray-400">
-                        <ShieldCheck size={48} className="mx-auto mb-4 text-gray-200" />
-                        <p className="font-medium">Ready to validate project integrity.</p>
-                        <p className="text-xs mt-1">Checks image dimensions, audio sync, and file availability.</p>
+                    <div className="text-center py-20 text-gray-400 flex flex-col items-center justify-center h-full">
+                        <div className="p-6 bg-gray-50 rounded-full mb-6 text-gray-300">
+                            <ShieldCheck size={48} />
+                        </div>
+                        <p className="font-bold text-gray-600 text-lg">Ready to validate project integrity</p>
+                        <p className="text-sm mt-2 max-w-sm">We will check image dimensions, audio sync, file availability, and timeline integrity.</p>
                     </div>
                 )}
 
                 {checking && (
-                    <div className="text-center py-12">
-                        <div className="animate-spin text-indigo-500 mb-4 mx-auto"><RotateCcw size={32} /></div>
-                        <p className="text-gray-500 font-medium">Scanning project assets...</p>
+                    <div className="text-center py-24 flex flex-col items-center justify-center h-full">
+                        <div className="animate-spin text-teal-600 mb-6"><RotateCcw size={40} /></div>
+                        <p className="text-gray-900 font-bold text-lg">Scanning project assets...</p>
+                        <p className="text-gray-500 text-sm mt-2">This may take a few seconds.</p>
                     </div>
                 )}
 
                 {report && (
-                    <div className={`rounded-xl border-2 p-6 ${statusColors[report.status]}`}>
-                        <div className="flex items-start gap-4">
-                            <div className="mt-1">
-                                {report.status === 'PASS' ? <CheckCircle className="text-green-600" size={32} /> :
-                                    report.status === 'WARNING' ? <AlertCircle className="text-yellow-600" size={32} /> :
-                                        <XCircle className="text-red-600" size={32} />}
+                    <div className={`rounded-xl border-2 p-8 transition-all ${statusColors[report.status]}`}>
+                        <div className="flex items-start gap-6">
+                            <div className="mt-1 flex-shrink-0">
+                                {report.status === 'PASS' ? <CheckCircle className="text-green-600" size={40} /> :
+                                    report.status === 'WARNING' ? <AlertCircle className="text-yellow-600" size={40} /> :
+                                        <XCircle className="text-red-600" size={40} />}
                             </div>
                             <div className="flex-1">
-                                <h4 className="text-lg font-bold mb-1">Validation Status: {report.status}</h4>
-                                <p className="text-sm opacity-80 mb-6 font-medium">
+                                <h4 className="text-2xl font-bold mb-2 tracking-tight">Validation Status: {report.status}</h4>
+                                <p className="text-base opacity-90 mb-8 font-medium leading-relaxed">
                                     {report.status === 'PASS'
                                         ? "All systems go. Your video is ready to render."
                                         : report.status === 'WARNING'
@@ -83,30 +89,33 @@ export default function RenderValidator({ projectId }) {
                                 </p>
 
                                 {/* Stats Grid */}
-                                <div className="grid grid-cols-3 gap-4 mb-6 bg-white/60 p-4 rounded-lg border border-black/5">
-                                    <div>
-                                        <div className="text-[10px] uppercase font-bold opacity-50">Est. Duration</div>
-                                        <div className="font-mono font-bold text-lg">{report.details?.total_duration?.toFixed(2)}s</div>
+                                <div className="grid grid-cols-3 gap-6 mb-8 bg-white/60 p-6 rounded-2xl border border-black/5">
+                                    <div className="flex flex-col">
+                                        <div className="text-[10px] uppercase font-bold opacity-50 tracking-wider mb-1">Est. Duration</div>
+                                        <div className="font-mono font-bold text-2xl tracking-tight">{report.details?.total_duration?.toFixed(2)}s</div>
                                     </div>
-                                    <div>
-                                        <div className="text-[10px] uppercase font-bold opacity-50">Est. Frames</div>
-                                        <div className="font-mono font-bold text-lg">{report.details?.estimated_frames}</div>
+                                    <div className="flex flex-col">
+                                        <div className="text-[10px] uppercase font-bold opacity-50 tracking-wider mb-1">Est. Frames</div>
+                                        <div className="font-mono font-bold text-2xl tracking-tight">{report.details?.estimated_frames}</div>
                                     </div>
-                                    <div>
-                                        <div className="text-[10px] uppercase font-bold opacity-50">Target FPS</div>
-                                        <div className="font-mono font-bold text-lg">{report.details?.fps}</div>
+                                    <div className="flex flex-col">
+                                        <div className="text-[10px] uppercase font-bold opacity-50 tracking-wider mb-1">Target FPS</div>
+                                        <div className="font-mono font-bold text-2xl tracking-tight">{report.details?.fps}</div>
                                     </div>
                                 </div>
 
                                 {/* Errors */}
                                 {report.errors?.length > 0 && (
-                                    <div className="mb-4 bg-red-100/50 p-4 rounded-lg">
-                                        <h5 className="text-xs font-bold uppercase text-red-700 mb-2 flex items-center gap-1">
-                                            <XCircle size={14} /> Fatal Errors
+                                    <div className="mb-6 bg-red-100/50 p-6 rounded-2xl border border-red-100/50">
+                                        <h5 className="text-xs font-bold uppercase text-red-800 mb-4 flex items-center gap-2">
+                                            <XCircle size={16} /> Fatal Errors
                                         </h5>
-                                        <ul className="list-disc pl-4 space-y-1">
+                                        <ul className="list-none space-y-3">
                                             {report.errors.map((err, i) => (
-                                                <li key={i} className="text-sm font-medium text-red-800">{err}</li>
+                                                <li key={i} className="text-sm font-bold text-red-800 flex items-start gap-2">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 flex-shrink-0"></span>
+                                                    {err}
+                                                </li>
                                             ))}
                                         </ul>
                                     </div>
@@ -114,13 +123,16 @@ export default function RenderValidator({ projectId }) {
 
                                 {/* Warnings */}
                                 {report.warnings?.length > 0 && (
-                                    <div className="mb-4 bg-yellow-100/50 p-4 rounded-lg">
-                                        <h5 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-1">
-                                            <AlertCircle size={14} /> Warnings
+                                    <div className="mb-4 bg-yellow-100/50 p-6 rounded-2xl border border-yellow-100/50">
+                                        <h5 className="text-xs font-bold uppercase text-yellow-800 mb-4 flex items-center gap-2">
+                                            <AlertCircle size={16} /> Warnings
                                         </h5>
-                                        <ul className="list-disc pl-4 space-y-1">
+                                        <ul className="list-none space-y-3">
                                             {report.warnings.map((warn, i) => (
-                                                <li key={i} className="text-sm font-medium text-yellow-900">{warn}</li>
+                                                <li key={i} className="text-sm font-bold text-yellow-900 flex items-start gap-2">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 mt-1.5 flex-shrink-0"></span>
+                                                    {warn}
+                                                </li>
                                             ))}
                                         </ul>
                                     </div>

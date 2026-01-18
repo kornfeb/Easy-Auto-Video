@@ -29,12 +29,20 @@ def build_timeline(project_path, bgm_config=None):
     voice_path = os.path.join(project_path, "audio", "voice.mp3")
     if not os.path.exists(voice_path):
         log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: voice.mp3 not found")
-        return {"status": "FAIL", "error": "voice.mp3 not found. Generate voice first."}
+        return {
+            "status": "FAIL", 
+            "error": "Missing dependency: voice.mp3 not found",
+            "detail": "Please generate the voiceover first in the Voice Studio step."
+        }
     
     total_audio_duration = get_actual_duration(voice_path)
     if total_audio_duration <= 0:
         log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: Invalid voice duration")
-        return {"status": "FAIL", "error": "Invalid voice duration."}
+        return {
+            "status": "FAIL", 
+            "error": "Invalid audio file",
+            "detail": "The generated voice file seems to be empty or corrupted. Please regenerate it."
+        }
     
     log_event(project_path, "pipeline.log", 
              f"[TIMELINE] Audio duration detected: {total_audio_duration}s")
