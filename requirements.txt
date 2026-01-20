@@ -7,3 +7,6 @@ python-dotenv
 gtts
 openai
 google-generativeai
+Pillow
+pydub
+google-genai

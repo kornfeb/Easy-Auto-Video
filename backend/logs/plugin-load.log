@@ -110,3 +110,78 @@ Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
 Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
 Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
 Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 121)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 121)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 121)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 125)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step4_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step5_video_stitch: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Error loading module steps.step4_build_timeline: unindent does not match any outer indentation level (timeline_manager.py, line 127)
+Duplicate step_id detected: timeline_builder in steps.step4_build_timeline
+Error loading module steps.step3_cover_prep: No module named 'PIL'
+Error loading module steps.06_timeline_gen: unindent does not match any outer indentation level (timeline_manager.py, line 94)
+Error loading module steps.08_render: unindent does not match any outer indentation level (video_renderer.py, line 149)

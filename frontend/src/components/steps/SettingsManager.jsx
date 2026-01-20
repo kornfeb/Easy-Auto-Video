@@ -7,8 +7,8 @@ import { API_URL } from '../../config';
 // Default empty state to prevent crashes
 const DEFAULT_SETTINGS = {
     script: { word_count: 40, template: "" },
-    video: { duration: 20, intro_silence: 1.5, outro_silence: 1.5 },
-    voice: { provider: "openai", profile: "alloy", speed: 1.0, breathing_pause: true },
+    video: { duration: 20, intro_silence: 3.0, outro_silence: 1.5 },
+    voice: { provider: "openai", profile: "alloy", speed: 1.0, breathing_pause: false },
     music: { track: "", volume: 0.2, duck_voice: true },
     mix: { voice_gain: 1.0, music_gain: 0.2 }
 };
@@ -221,7 +221,7 @@ export default function SettingsManager({ projectId, onUpdate }) {
                                 <div className="relative">
                                     <input
                                         type="number" step="0.1"
-                                        value={video.intro_silence || 1.5}
+                                        value={video.intro_silence || 3.0}
                                         onChange={(e) => handleChange('video', 'intro_silence', parseFloat(e.target.value))}
                                         className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg font-mono text-xs font-medium focus:border-emerald-400 outline-none"
                                     />
@@ -240,6 +240,24 @@ export default function SettingsManager({ projectId, onUpdate }) {
                                     <span className="absolute right-3 top-2.5 text-[10px] text-gray-400 font-bold">S</span>
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-gray-50">
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${video.ken_burns_enabled !== false ? 'bg-emerald-600 border-emerald-600' : 'bg-white border-gray-300'}`}>
+                                    {video.ken_burns_enabled !== false && <div className="bg-white w-2 h-2 rounded-full" />}
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    checked={video.ken_burns_enabled !== false}
+                                    onChange={(e) => handleChange('video', 'ken_burns_enabled', e.target.checked)}
+                                    className="hidden"
+                                />
+                                <div className="flex flex-col">
+                                    <span className="text-sm text-gray-700 font-bold group-hover:text-emerald-700 transition-colors">Default Ken Burns Motion</span>
+                                    <span className="text-[10px] text-gray-400 font-medium tracking-tight">Apply subtle pans & zooms to all image segments by default.</span>
+                                </div>
+                            </label>
                         </div>
                     </div>
                 </section>
@@ -320,18 +338,6 @@ export default function SettingsManager({ projectId, onUpdate }) {
                                 className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
                             />
                         </div>
-                        <label className="flex items-center gap-3 cursor-pointer group">
-                            <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${voice.breathing_pause ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-300'}`}>
-                                {voice.breathing_pause && <div className="bg-white w-2 h-2 rounded-full" />}
-                            </div>
-                            <input
-                                type="checkbox"
-                                checked={voice.breathing_pause || false}
-                                onChange={(e) => handleChange('voice', 'breathing_pause', e.target.checked)}
-                                className="hidden"
-                            />
-                            <span className="text-sm text-gray-600 font-medium group-hover:text-purple-700 transition-colors">Add natural breathing pauses</span>
-                        </label>
                     </div>
                 </section>
 

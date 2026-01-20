@@ -20,6 +20,17 @@ def initialize_project_structure(project_id: str, product_name: str = None) -> d
     for folder in subfolders:
         folder_path = os.path.join(project_path, folder)
         os.makedirs(folder_path, exist_ok=True)
+        
+    # Preload Default BGM to input
+    try:
+        import shutil
+        app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # backend dir
+        bgm_src = os.path.join(app_root, "assets", "music", "carefree.mp3")
+        bgm_dst = os.path.join(project_path, "input", "carefree.mp3")
+        if os.path.exists(bgm_src) and not os.path.exists(bgm_dst):
+             shutil.copy2(bgm_src, bgm_dst)
+    except Exception as e:
+        print(f"Warning: Failed to preload BGM: {e}")
 
     if product_name and not os.path.exists(product_json_path):
         payload = {"product_name": product_name}
@@ -31,7 +42,26 @@ def initialize_project_structure(project_id: str, product_name: str = None) -> d
         initial_data = {
             "status": "initialized",
             "created_at": now,
-            "last_updated": now
+            "last_updated": now,
+            "settings": {
+                "music": {
+                    "track": "carefree.mp3",
+                    "duck_voice": True
+                },
+                "mix": {
+                    "voice_gain": 1.0,
+                    "music_gain": 0.2
+                },
+                "video": {
+                    "intro_silence": 0.0,
+                    "outro_silence": 0.0,
+                    "ken_burns_enabled": True
+                },
+                "script": {
+                    "word_count": 40,
+                    "template": ""
+                }
+            }
         }
         with open(project_json_path, 'w') as f:
             json.dump(initial_data, f, indent=2)
@@ -72,15 +102,17 @@ def list_projects_metadata():
                             except:
                                 pass
 
-                        projects.append({
+                        # Prepare base item with all JSON data
+                        project_item = data.copy()
+                        
+                        # Merge/Override specific metadata
+                        project_item.update({
                             "project_id": item,
                             "product_name": product_name,
-                            "status": data.get("status", "unknown"),
-                            "created_at": data.get("created_at"),
-                            "last_updated": data.get("last_updated"),
-                            "pipeline": data.get("pipeline", {}),
                             "config": config
                         })
+                        
+                        projects.append(project_item)
                 except Exception as e:
                     print(f"Error reading project {item}: {e}")
                     continue
@@ -142,10 +174,14 @@ def list_assets(project_id):
         if any(item.lower().endswith(ext) for ext in valid_exts):
              fpath = os.path.join(target_dir, item)
              size = os.path.getsize(fpath)
+             # Check for backup
+             has_backup = os.path.exists(os.path.join(target_dir, "backups", item))
+             
              assets.append({
                  "name": item,
                  "url": f"/media/{project_id}/input/{item}",
                  "size": size,
+                 "has_backup": has_backup,
                  "sort_key": natural_sort_key(item)
              })
     

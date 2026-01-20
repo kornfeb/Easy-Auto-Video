@@ -10,25 +10,30 @@ def build_timeline(project_path, bgm_config=None):
     """
     
     # Defaults
-    silence_start = 1.5
-    silence_end = 1.5
+    silence_start = 0.0
+    silence_end = 0.0
 
     # Load Settings
     project_json_path = os.path.join(project_path, "project.json")
+    ken_burns_global = True
     if os.path.exists(project_json_path):
         try:
             with open(project_json_path, 'r') as f:
                 pdata = json.load(f)
                 video_settings = pdata.get("settings", {}).get("video", {})
-                silence_start = video_settings.get("intro_silence", 1.5)
-                silence_end = video_settings.get("outro_silence", 1.5)
+                silence_start = video_settings.get("intro_silence", 0.0)
+                silence_end = video_settings.get("outro_silence", 0.0)
+                ken_burns_global = video_settings.get("ken_burns_enabled", True)
         except:
             pass
             
     # 1. Get Voice Duration
-    voice_path = os.path.join(project_path, "audio", "voice.mp3")
+    voice_path = os.path.join(project_path, "audio", "voice_processed.mp3")
     if not os.path.exists(voice_path):
-        log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: voice.mp3 not found")
+        voice_path = os.path.join(project_path, "audio", "voice.mp3")
+        
+    if not os.path.exists(voice_path):
+        log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: voice source not found")
         return {
             "status": "FAIL", 
             "error": "Missing dependency: voice.mp3 not found",
@@ -61,7 +66,31 @@ def build_timeline(project_path, bgm_config=None):
     input_dir = os.path.join(project_path, "input")
     valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
     images = [f for f in os.listdir(input_dir) if any(f.lower().endswith(ext) for ext in valid_exts)]
-    images.sort()
+    
+    # Remove cover.jpg from the list if it's already there to ensure no duplicates
+    # Case-insensitive check for reliability
+    target_cover_names = {"cover.jpg", "cover.png", "cover.jpeg", "cover.webp"}
+    
+    # Also get source_image_id if stored in project.json
+    source_img_to_exclude = None
+    if os.path.exists(project_json_path):
+        try:
+             with open(project_json_path, 'r') as f:
+                 pdata = json.load(f)
+                 source_img_to_exclude = pdata.get("cover", {}).get("source_image_id")
+        except:
+             pass
+
+    images = [img for img in images if img.lower() not in target_cover_names]
+    if source_img_to_exclude:
+         images = [img for img in images if img != source_img_to_exclude]
+    
+    # Check if cover exists in root and should be included as a product image
+    cover_path = os.path.join(project_path, "cover.jpg")
+    if os.path.exists(cover_path):
+         images.insert(0, "../cover.jpg")
+             
+    images.sort(key=lambda x: x if not x.startswith("../") else "0_cover") # Sort cover first if it's there
 
     if not images:
         log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: No images found")
@@ -70,90 +99,46 @@ def build_timeline(project_path, bgm_config=None):
     num_images = len(images)
     log_event(project_path, "pipeline.log", f"[TIMELINE] Found {num_images} images")
 
-    # 4. Check Cover Image Settings (Intro)
     use_cover_intro = False
-    cover_file = "cover.jpg"
     
-    if os.path.exists(project_json_path):
-        try:
-            with open(project_json_path, 'r') as f:
-                pdata = json.load(f)
-                if "cover" in pdata and pdata["cover"].get("use_as_intro"):
-                    use_cover_intro = True
-                    cover_file = pdata["cover"].get("file_path", "cover.jpg")
-                    if not os.path.exists(os.path.join(project_path, cover_file)):
-                        log_event(project_path, "pipeline.log", "[TIMELINE] WARN: Cover intro requested but file missing. Ignoring.")
-                        use_cover_intro = False
-        except Exception as e:
-            log_event(project_path, "pipeline.log", f"[TIMELINE] WARN: Reading project.json failed: {e}")
-
-    # 5. Hybrid Distribution Logic
-    if num_images == 0:
-        return {"status": "FAIL", "error": "No images"}
+    
 
     segments = []
     current_time = 0.0
     effects = ["zoom_in", "zoom_out", "pan_left", "pan_right", "none"]
+
+    # Distribution Logic (Treat everything as regular segments)
+    base_duration = usable_duration / num_images if num_images > 0 else 0
     
-    # CASE A: Use Cover Intro
-    if use_cover_intro:
-        log_event(project_path, "pipeline.log", f"[TIMELINE] Using Cover Image as {silence_start}s Intro")
+    for i, img_name in enumerate(images):
+        segment_duration = base_duration
         
+        # EXCEPTION 1: First Image (Apply Start Silence padding)
+        if i == 0:
+            segment_duration += silence_start
+            
+        # EXCEPTION 2: Last Image (Absorb any rounding errors to match total duration)
+        if i == num_images - 1:
+            segment_duration = total_audio_duration - current_time
+        
+        if segment_duration < 0: segment_duration = 0
+
+        # Ken Burns Defaults
+        is_video = any(img_name.lower().endswith(ext) for ext in [".mp4", ".webm", ".mov"])
+        ken_burns = {
+            "enabled": ken_burns_global and not is_video,
+            "preset": "subtle"
+        }
+
         segments.append({
-            "image": f"../{cover_file}",
-            "start": 0.0,
-            "end": silence_start,
-            "duration": silence_start,
-            "effect": "none"
+            "image": img_name,
+            "start": round(current_time, 3),
+            "end": round(current_time + segment_duration, 3),
+            "duration": round(segment_duration, 3),
+            "effect": effects[i % len(effects)],
+            "ken_burns": ken_burns
         })
-        current_time = silence_start
-        
-        base_duration = usable_duration / num_images
-        
-        for i, img_name in enumerate(images):
-             segment_duration = base_duration
-             
-             # EXCEPTION: Last Image
-             if i == num_images - 1:
-                 # Ensure it covers end silence
-                 segment_duration = total_audio_duration - current_time
-
-             if segment_duration < 0: segment_duration = 0
-
-             segments.append({
-                "image": img_name,
-                "start": round(current_time, 3),
-                "end": round(current_time + segment_duration, 3),
-                "duration": round(segment_duration, 3),
-                "effect": effects[i % len(effects)]
-             })
-             current_time += segment_duration
-
-    # CASE B: No Intro (Use First Image to Cover Start Silence)
-    else:
-        base_duration = usable_duration / num_images
-        
-        for i, img_name in enumerate(images):
-            segment_duration = base_duration
-            
-            # EXCEPTION 1: First Image
-            if i == 0:
-                segment_duration += silence_start
-                
-            # EXCEPTION 2: Last Image
-            if i == num_images - 1:
-                segment_duration = total_audio_duration - current_time
-            
-            if segment_duration < 0: segment_duration = 0
-
-            segments.append({
-                "image": img_name,
-                "start": round(current_time, 3),
-                "end": round(current_time + segment_duration, 3),
-                "duration": round(segment_duration, 3),
-                "effect": effects[i % len(effects)]
-            })
-            current_time += segment_duration
+        current_time += segment_duration
 
     # 6. Background Music Config (Legacy Check, but mainly we use settings later in mixer)
     if not bgm_config:

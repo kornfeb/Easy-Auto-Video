@@ -31,26 +31,45 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
             # If arguments are passed (legacy or manual override), use them. 
             # Otherwise fall back to settings.
             
-            # Mix Settings
+            # Mix Settings (Legacy)
             mix_settings = pdata.get("settings", {}).get("mix", {})
             settings_gain_voice = mix_settings.get("voice_gain", 1.0)
             settings_gain_music = mix_settings.get("music_gain", 0.2)
             
-            # Music Settings
+            # Music Settings (Legacy)
             music_settings = pdata.get("settings", {}).get("music", {})
+            legacy_track = music_settings.get("track", "")
             
-            # If function called with None, try to get from settings
+            # Music Config (New - from MusicManager)
+            music_config = pdata.get("music_config", {})
+            
+            # Resolve Music Filename
             if not music_filename:
-                music_filename = music_settings.get("track", "")
-            
-            # "bgm_volume_adj" is a legacy parameter (dB adjustment).
-            # New system uses "Gain" (0.0 - 1.0 multiplier).
-            # We will use gain if no specific dB adjustment provided.
+                # 1. Try new config
+                if music_config.get("enabled", True):
+                    music_filename = music_config.get("music_file", legacy_track)
+                else:
+                    music_filename = "none" # Explicitly disabled
+                
+                # 2. Fallback to legacy if still empty
+                if not music_filename:
+                    music_filename = legacy_track
+
+            # Resolve Volume (if not provided in args)
+            if bgm_volume_adj is None:
+                # 1. Try new config
+                if "volume_adj" in music_config:
+                    bgm_volume_adj = music_config.get("volume_adj") # It's in dB already
+                else:
+                    # 2. Fallback to settings.music_gain (Multiplier)
+                    pass # logic below handles settings_gain_music conversion
             
             settings_ducking = music_settings.get("duck_voice", True)
 
         # Paths
-        voice_path = os.path.join(project_path, "audio", "voice.mp3")
+        voice_path = os.path.join(project_path, "audio", "voice_processed.mp3")
+        if not os.path.exists(voice_path):
+            voice_path = os.path.join(project_path, "audio", "voice.mp3")
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "music")
         
         # Output
@@ -75,12 +94,26 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
             log_event(project_path, "pipeline.log", "[AUDIO_MIX] No music selected. Output voice only.")
             return {"status": "OK", "output": output_path, "duration": len(voice)/1000.0}
 
-        music_path = os.path.join(assets_dir, music_filename)
-        if not os.path.exists(music_path):
-            log_event(project_path, "pipeline.log", f"[AUDIO_MIX] WARNING: Music file {music_filename} not found. Skipping music.")
+        # Find Music File (Prioritize Local Project Files)
+        music_path = None
+        
+        # Check locations in order
+        possible_paths = [
+            os.path.join(project_path, "input", music_filename),
+            os.path.join(project_path, "audio", music_filename),
+            os.path.join(assets_dir, music_filename)
+        ]
+        
+        for p in possible_paths:
+            if os.path.exists(p):
+                music_path = p
+                break
+        
+        if not music_path:
+            log_event(project_path, "pipeline.log", f"[AUDIO_MIX] WARNING: Music file {music_filename} not found in project or assets. Skipping music.")
             voice = AudioSegment.from_file(voice_path)
             voice.export(output_path, format="wav")
-            return {"status": "WARNING", "message": "Music file missing, using voice only", "output": output_path}
+            return {"status": "WARNING", "message": f"Music file {music_filename} missing, using voice only", "output": output_path}
 
         # Load Audio
         log_event(project_path, "pipeline.log", f"[AUDIO_MIX] Mixing voice with {music_filename}...")

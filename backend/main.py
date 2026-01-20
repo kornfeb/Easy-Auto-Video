@@ -6,6 +6,11 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Add bin directory to PATH for ffmpeg/ffprobe
+bin_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "bin"))
+if os.path.exists(bin_dir):
+    os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+
 import mimetypes
 mimetypes.init()
 mimetypes.add_type('audio/mpeg', '.mp3')
@@ -18,6 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 from core.config import PROJECTS_DIR
 from core import project as project_utils
@@ -30,6 +36,17 @@ from utils.cover_generator import (
     CoverTextGenRequest, CoverImageGenRequest, CoverPromptGenRequest,
     generate_cover_text_ai, generate_cover_image_ai, generate_cover_prompt_ai
 )
+from utils.gemini_tts import GEMINI_VOICES, generate_gemini_tts
+from fastapi.responses import Response
+
+# --- CORS Static Files ---
+class CORSStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        return response
 
 app = FastAPI()
 
@@ -42,8 +59,8 @@ app.add_middleware(
 )
 
 # Assets
-app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
-app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+app.mount("/media", CORSStaticFiles(directory=PROJECTS_DIR), name="media")
+app.mount("/static", CORSStaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
 # --- SETTINGS MODELS ---
 class ScriptSettings(BaseModel):
@@ -56,14 +73,14 @@ class ScriptSettings(BaseModel):
 
 class VideoSettings(BaseModel):
     duration: int = 20
-    intro_silence: float = 1.5
-    outro_silence: float = 1.5
+    intro_silence: float = 0.0
+    outro_silence: float = 0.0
 
 class VoiceSettings(BaseModel):
-    provider: str = "openai"
-    profile: str = "alloy"
+    provider: str = "gemini"
+    profile: str = "gm_sadaltager"
     speed: float = 1.0
-    breathing_pause: bool = True
+    breathing_pause: bool = False
 
 class MusicSettings(BaseModel):
     track: str = "" # Default none or select first available
@@ -82,6 +99,31 @@ class ProjectSettings(BaseModel):
     mix: MixSettings = MixSettings()
 
 # --- SETTINGS ENDPOINTS ---
+
+class GeminiTTSPreviewRequest(BaseModel):
+    text: str
+    voice: str
+    style: Optional[str] = ""
+
+@app.get("/voice/gemini/voices")
+def get_gemini_voices():
+    return GEMINI_VOICES
+
+@app.post("/api/tts/gemini/preview")
+def preview_gemini_tts(request: GeminiTTSPreviewRequest):
+    try:
+        audio_data = generate_gemini_tts(
+            text=request.text,
+            voice_name=request.voice,
+            style_instructions=request.style
+        )
+        # We return the raw binary audio data
+        return Response(content=audio_data, media_type="audio/wav")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/projects/{project_id}/settings")
 def get_project_settings(project_id: str):
     project_path = os.path.join(PROJECTS_DIR, project_id)
@@ -139,10 +181,10 @@ class VoiceGenerateRequest(BaseModel):
     provider: str
     voice: Optional[str] = None
     speed: float = 1.0
+    style: Optional[str] = None
 
 @app.post("/projects/{project_id}/voice/generate")
 def generate_project_voice(project_id: str, request: VoiceGenerateRequest):
-    from utils.tts_handler import generate_voice
     project_path = os.path.join(PROJECTS_DIR, project_id)
     
     # We now trust the payload's text if provided, 
@@ -156,19 +198,24 @@ def generate_project_voice(project_id: str, request: VoiceGenerateRequest):
     
     if not content:
         raise HTTPException(status_code=400, detail="Script content is empty.")
-        
-    # generate_voice in tts_handler needs updating to accept provider/voice directly
-    # but for now we'll pass the richer object or keep signature
-    result = generate_voice(
-        project_id, 
-        project_path, 
-        content, 
-        request.profile_id, 
-        request.speed,
-        provider=request.provider,
-        voice_name=request.voice
-    )
-    
+
+    try:
+        from utils import tts_handler
+        result = tts_handler.generate_voice(
+            project_id=project_id,
+            project_path=project_path,
+            script_content=content,
+            profile_id=request.profile_id,
+            speed=request.speed,
+            provider=request.provider,
+            voice_name=request.voice,
+            style_instructions=request.style
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
     if result.get("status") == "FAIL":
         raise HTTPException(status_code=500, detail=result.get("error", "Voice generation failed"))
     
@@ -375,6 +422,88 @@ def download_project_video(project_id: str):
 def list_project_assets(project_id: str):
     return project_utils.list_assets(project_id)
 
+@app.get("/projects/{project_id}/timeline/preview")
+def get_timeline_preview(project_id: str):
+    from urllib.parse import quote
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    timeline_path = os.path.join(project_path, "timeline.json")
+    
+    # 1. Try to load existing timeline, or generate a draft
+    timeline = {}
+    if os.path.exists(timeline_path):
+        with open(timeline_path, 'r') as f:
+            timeline = json.load(f)
+    else:
+        # Generate a lightweight draft for preview
+        from utils.timeline_manager import build_timeline
+        res = build_timeline(project_path)
+        if res.get("status") == "OK":
+            timeline = res["timeline"]
+        else:
+            return {"error": "Could not generate timeline preview", "detail": res.get("error")}
+
+    # 2. Enrich with Crop Data
+    from utils.crop_manager import load_crops
+    crops_data = load_crops(project_path)
+    
+    enriched_segments = []
+    input_dir = os.path.join(project_path, "input")
+    
+    print(f"DEBUG: Previewing {len(timeline.get('segments', []))} segments for {project_id}")
+    
+    for i, seg in enumerate(timeline.get("segments", [])):
+        raw_img_name = seg.get("image")
+        
+        # Resolve Actual File Path
+        # Some assets are in /input/, some (like cover.jpg) are in root
+        if raw_img_name.startswith("../"):
+            img_name = raw_img_name[3:]
+            img_path = os.path.join(project_path, img_name)
+            image_url = f"/media/{project_id}/{quote(img_name)}"
+        else:
+            img_name = raw_img_name
+            img_path = os.path.join(input_dir, img_name)
+            image_url = f"/media/{project_id}/input/{quote(img_name)}"
+        
+        # Check existence
+        exists = os.path.exists(img_path)
+        if not exists:
+            print(f"DEBUG: Segment {i} asset MISSING: {img_path}")
+            
+        # Get actual dimensions to help frontend draw boxes
+        w, h = 0, 0
+        if exists:
+            try:
+                from PIL import Image
+                with Image.open(img_path) as img:
+                    w, h = img.size
+            except Exception as e:
+                print(f"DEBUG: Failed to read image {img_name}: {e}")
+
+        enriched_segments.append({
+            **seg,
+            "crop_data": crops_data.get(img_name),
+            "dimensions": {"w": w, "h": h},
+            "image_url": image_url
+        })
+
+    # 3. Add Audio URL (voice.mp3)
+    audio_url = None
+    voice_path = os.path.join(project_path, "audio", "voice.mp3")
+    if os.path.exists(voice_path):
+        audio_url = f"/media/{project_id}/audio/voice.mp3"
+    else:
+        print(f"DEBUG: Preview VOICE missing: {voice_path}")
+
+    return {
+        "status": "OK",
+        "total_duration": timeline.get("total_audio_duration"),
+        "intro_duration": timeline.get("silence_start_duration"),
+        "outro_duration": timeline.get("silence_end_duration"),
+        "segments": enriched_segments,
+        "audio_url": audio_url
+    }
+
 @app.get("/projects/{project_id}/logs")
 def get_project_logs(project_id: str):
     return project_utils.get_project_logs(project_id)
@@ -390,8 +519,9 @@ class ImageProcessRequest(BaseModel):
     process_all: bool = False
     width: int = 1080
     height: int = 1920
-    mode: str = "fit" # fit, fill
-    bg_color: str = "#FFA500"
+    mode: str = "fit" # fit, fill, normalize
+    bg_color: str = "#000000"
+    ai_smart_crop: bool = False
 
 @app.post("/projects/{project_id}/images/process")
 def process_project_images(project_id: str, request: ImageProcessRequest):
@@ -417,7 +547,8 @@ def process_project_images(project_id: str, request: ImageProcessRequest):
         "width": request.width,
         "height": request.height,
         "mode": request.mode,
-        "bg_color": request.bg_color
+        "bg_color": request.bg_color,
+        "ai_smart_crop": request.ai_smart_crop
     }
     
     results = process_batch_images(project_path, target_images, config)
@@ -425,23 +556,72 @@ def process_project_images(project_id: str, request: ImageProcessRequest):
     return {"results": results}
 
 @app.post("/projects/{project_id}/upload/image")
-def upload_project_image(project_id: str, file: UploadFile = File(...)):
+def upload_project_image(project_id: str, file: UploadFile = File(...), auto_normalize: bool = True, ai_smart_crop: bool = False):
     project_path = os.path.join(PROJECTS_DIR, project_id)
     input_dir = os.path.join(project_path, "input")
+    backup_dir = os.path.join(input_dir, "backups")
     os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(backup_dir, exist_ok=True)
     
     file_path = os.path.join(input_dir, file.filename)
+    backup_path = os.path.join(backup_dir, file.filename)
     
+    # 1. Automatic Backup if file exists
+    if os.path.exists(file_path):
+        import shutil
+        shutil.copy2(file_path, backup_path)
+        log_event(project_path, "asset_edit.log", f"Backed up {file.filename} before overwrite")
+
     try:
         with open(file_path, "wb") as f:
             while content := file.file.read(1024 * 1024):
                 f.write(content)
+                
+        # 2. Auto-Normalize if requested
+        if auto_normalize:
+            from utils.image_processor import normalize_asset
+            normalize_asset(project_path, file.filename, ai_smart_crop=ai_smart_crop)
+            log_event(project_path, "asset_edit.log", f"Auto-Normalized {file.filename} (AI={ai_smart_crop})")
+            
     except Exception as e:
-         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+         raise HTTPException(status_code=500, detail=f"Failed to save/normalize file: {e}")
          
-    # timestamp_update(project_path) # Optional context update
+    return {"status": "OK", "filename": file.filename, "backed_up": os.path.exists(backup_path), "normalized": auto_normalize}
+
+@app.delete("/projects/{project_id}/assets/{filename}")
+def delete_project_asset(project_id: str, filename: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    file_path = os.path.join(project_path, "input", filename)
+    backup_path = os.path.join(project_path, "input", "backups", filename)
     
-    return {"status": "OK", "filename": file.filename}
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        os.remove(file_path)
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        log_event(project_path, "asset_edit.log", f"Deleted asset: {filename}")
+        return {"status": "OK"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/projects/{project_id}/assets/{filename}/restore")
+def restore_project_asset(project_id: str, filename: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    file_path = os.path.join(project_path, "input", filename)
+    backup_path = os.path.join(project_path, "input", "backups", filename)
+    
+    if not os.path.exists(backup_path):
+        raise HTTPException(status_code=404, detail="No backup found for this file.")
+        
+    try:
+        import shutil
+        shutil.copy2(backup_path, file_path)
+        log_event(project_path, "asset_edit.log", f"Restored original asset: {filename}")
+        return {"status": "OK"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Pipeline
 class PipelineStepRequest(BaseModel):
@@ -484,6 +664,10 @@ def run_pipeline_step(project_id: str, request: PipelineStepRequest):
         # Run the step
         step_obj.run(project_id, project_path)
         set_done(project_path, f"{request.step_name}.done")
+
+        # RELOAD project.json to capture changes made by step.run()
+        with open(project_json_path, 'r') as f:
+            data = json.load(f)
 
         data["pipeline"][request.step_name] = {
             "status": "completed",
@@ -621,6 +805,19 @@ def update_project(project_id: str, request: ProjectUpdateRequest):
         json.dump(data, f, indent=2)
     
     return {"status": "ok", "project": data}
+    
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: str):
+    import shutil
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    try:
+        shutil.rmtree(project_path)
+        return {"status": "OK", "message": f"Project {project_id} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
 
 @app.post("/projects/{project_id}/run/auto")
 def run_pipeline_auto(project_id: str):
@@ -801,12 +998,12 @@ def save_project_script(project_id: str, request: ScriptSaveRequest):
             data = json.load(f)
         
         if "pipeline" not in data: data["pipeline"] = {}
-        if "script_gen" not in data["pipeline"]:
-             data["pipeline"]["script_gen"] = {}
+        if "02_script_gen" not in data["pipeline"]:
+             data["pipeline"]["02_script_gen"] = {}
              
         now = datetime.now().isoformat()
-        data["pipeline"]["script_gen"]["status"] = "MANUAL_EDIT"
-        data["pipeline"]["script_gen"]["updated_at"] = now
+        data["pipeline"]["02_script_gen"]["status"] = "MANUAL_EDIT"
+        data["pipeline"]["02_script_gen"]["updated_at"] = now
         data["last_updated"] = now
         
         with open(project_json_path, 'w') as f:
@@ -867,20 +1064,32 @@ def set_project_cover(project_id: str, request: CoverSetRequest):
 
     cover_filename = "cover.jpg" # Standardize name
     cover_path = os.path.join(project_path, cover_filename)
-    
-    # 1. Handle Image Source
+    # input_dir = os.path.join(project_path, "input") # Still useful for src_path resolution below
+    input_dir = os.path.join(project_path, "input")
+
     if request.source == "existing":
         if not request.image_id:
             raise HTTPException(status_code=400, detail="image_id required for existing source")
         
-        src_path = os.path.join(project_path, "input", request.image_id)
+        src_path = os.path.join(input_dir, request.image_id)
         if not os.path.exists(src_path):
              raise HTTPException(status_code=404, detail="Source image not found")
         
-        # Copy to cover path AND source path
+        # Determine Extension
+        # ext = request.image_id.split('.')[-1]
+        
+        # Create a source backup for rendering text without burning it in twice
         import shutil
-        shutil.copy2(src_path, cover_path)
         shutil.copy2(src_path, os.path.join(project_path, "cover_source.jpg"))
+        
+        # Standard cover (Intro) is in root as .jpg
+        from PIL import Image
+        with Image.open(src_path) as img:
+            rgb_img = img.convert("RGB")
+            rgb_img.save(cover_path, quality=95)
+        
+        # REVERTED: Do NOT move or rename the original asset to 999.ext
+        # shutil.move(src_path, input_cover_path)
         
     elif request.source == "url":
         if not request.url:
@@ -888,6 +1097,7 @@ def set_project_cover(project_id: str, request: CoverSetRequest):
             
         # Download
         import requests
+        import shutil
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -899,7 +1109,10 @@ def set_project_cover(project_id: str, request: CoverSetRequest):
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
+            # Sync to source backup and input gallery
+            cleanup_tail_images()
             shutil.copy2(cover_path, os.path.join(project_path, "cover_source.jpg"))
+            shutil.copy2(cover_path, os.path.join(input_dir, "999.jpg"))
 
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to download image: {str(e)}")
@@ -970,6 +1183,10 @@ async def upload_project_cover(project_id: str, file: UploadFile = File(...), us
             
         import shutil
         shutil.copy2(cover_path, os.path.join(project_path, "cover_source.jpg"))
+        
+        # REVERTED: Do NOT copy uploaded cover to 999.jpg in gallery
+        # input_dir = os.path.join(project_path, "input")
+        # shutil.copy2(cover_path, os.path.join(input_dir, "999.jpg"))
             
         # Update metadata
         json_path = os.path.join(project_path, "project.json")
@@ -1037,6 +1254,31 @@ def generate_cover_text_endpoint(project_id: str, request: CoverTextGenRequest):
     result = generate_cover_text_ai(project_path, request.product_name, request.tone)
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
+    
+    # Save the generated hook to project.json
+    if "options" in result and result["options"]:
+        opt = result["options"][0]
+        json_path = os.path.join(project_path, "project.json")
+        try:
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f: 
+                    data = json.load(f)
+                
+                if "cover" not in data: 
+                    data["cover"] = {}
+                if "text_overlay" not in data["cover"] or not isinstance(data["cover"]["text_overlay"], dict):
+                    data["cover"]["text_overlay"] = {}
+                
+                # Update only fields we generated, keep style settings
+                data["cover"]["text_overlay"]["title"] = opt.get("title", "")
+                data["cover"]["text_overlay"]["subtitle"] = opt.get("subtitle", "")
+                data["last_updated"] = datetime.now().isoformat()
+                
+                with open(json_path, 'w') as f: 
+                    json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Failed to auto-save hook: {str(e)}")
+    
     return result
 
 @app.post("/projects/{project_id}/cover/gen-image")

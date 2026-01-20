@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
     ArrowLeft, Image as ImageIcon, FileText, Mic,
-    Music, Film, ShieldCheck, Video, Activity, Terminal, Settings
+    Music, Film, ShieldCheck, Video, Activity, Terminal, Settings, ExternalLink, Sparkles, RotateCcw
 } from 'lucide-react';
 import { API_URL } from '../config';
 
@@ -16,6 +16,7 @@ import RenderValidator from './RenderValidator';
 import VideoRenderer from './VideoRenderer';
 import LogViewer from './steps/LogViewer';
 import SettingsManager from './steps/SettingsManager';
+import VoiceSandbox from './steps/VoiceSandbox';
 import PipelineOrchestrator from './PipelineOrchestrator';
 
 const NAV_ITEMS = [
@@ -35,6 +36,7 @@ export default function ProjectLayout() {
     const [project, setProject] = useState(null);
     const [loading, setLoading] = useState(true);
     const [activeSection, setActiveSection] = useState('section-images');
+    const [selectedAssetForEdit, setSelectedAssetForEdit] = useState(null);
 
     // Fetch Logic
     const loadProject = async () => {
@@ -128,17 +130,37 @@ export default function ProjectLayout() {
                     <Link to="/" className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition">
                         <ArrowLeft size={20} />
                     </Link>
+
                     <div className="h-6 w-px bg-gray-200"></div>
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-sm">
                             {project.project_id.substring(0, 2).toUpperCase()}
                         </div>
-                        <div>
-                            <h1 className="text-sm font-bold text-gray-900 leading-tight">{project.project_id}</h1>
+                        <div className="flex flex-col">
+                            <div className="flex items-center gap-3">
+                                <h1 className="text-xl font-black text-gray-900 leading-tight tracking-tight">
+                                    {project.product_name || project.project_id}
+                                </h1>
+                                {project.product_url ? (
+                                    <a
+                                        href={project.product_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-blue-700 transition-all shadow-md shadow-blue-500/20"
+                                    >
+                                        <span>Product URL</span>
+                                        <ExternalLink size={10} />
+                                    </a>
+                                ) : (
+                                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest px-3 py-1 bg-gray-50 rounded-lg border border-gray-100">
+                                        No URL set
+                                    </span>
+                                )}
+                            </div>
                             <input
                                 type="text"
-                                className="text-[10px] text-gray-500 max-w-[200px] truncate bg-transparent border-none p-0 focus:ring-0 placeholder-gray-300 hover:text-gray-700 transition-colors w-full"
-                                placeholder="Click to name product..."
+                                className="text-[11px] text-gray-500 max-w-[400px] truncate bg-transparent border-none p-0 focus:ring-0 placeholder-gray-300 hover:text-gray-700 transition-colors w-full font-medium"
+                                placeholder="Edit reference name..."
                                 defaultValue={project.product_name || ""}
                                 onBlur={async (e) => {
                                     const newVal = e.target.value.trim();
@@ -200,7 +222,17 @@ export default function ProjectLayout() {
                     </div>
                 </div>
 
-                <PipelineOrchestrator projectId={project.project_id} projectStatus={project.status} onUpdate={loadProject} />
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-700 transition"
+                        title="Reload Project"
+                    >
+                        <RotateCcw size={20} />
+                    </button>
+                    <div className="h-8 w-px bg-gray-200"></div>
+                    <PipelineOrchestrator projectId={project.project_id} projectStatus={project.status} onUpdate={loadProject} />
+                </div>
             </header>
 
 
@@ -246,7 +278,11 @@ export default function ProjectLayout() {
 
                         {/* Sections */}
                         <section id="section-images" className="scroll-mt-24 min-h-[50vh]">
-                            <InputImages {...props} />
+                            <InputImages
+                                {...props}
+                                initialEditingAsset={selectedAssetForEdit}
+                                onClearEdit={() => setSelectedAssetForEdit(null)}
+                            />
                         </section>
 
                         <div className="h-px bg-gray-100"></div>
@@ -270,7 +306,13 @@ export default function ProjectLayout() {
                         <div className="h-px bg-gray-100"></div>
 
                         <section id="section-timeline" className="scroll-mt-24 min-h-[50vh]">
-                            <TimelineManager {...props} />
+                            <TimelineManager
+                                {...props}
+                                onEditAsset={(assetName) => {
+                                    setSelectedAssetForEdit(assetName);
+                                    scrollToSection('section-images');
+                                }}
+                            />
                         </section>
 
                         <div className="h-px bg-gray-100"></div>

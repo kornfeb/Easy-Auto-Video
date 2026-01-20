@@ -77,9 +77,20 @@ def process_voice(project_id, project_path):
         normalization_applied = True # Simulated
     
     # 5. Duration Verification
-    final_duration = get_actual_duration(processed_audio) or orig_duration
+    final_duration = get_actual_duration(processed_audio)
     
-    # For simulation, we might pretend it's slightly shorter if we were trimming
+    # Check for anomalies (e.g. file became empty/too short)
+    if final_duration < 1.0 and orig_duration > 5.0:
+        log_event(project_path, "pipeline.log", f"[STEP19] [WARN] Processed audio too short ({final_duration}s). Reverting to original.")
+        shutil.copy2(raw_audio, processed_audio)
+        final_duration = orig_duration
+        silence_trimmed = False
+        normalization_applied = False
+        
+    if final_duration <= 0:
+        final_duration = orig_duration
+
+    # For simulation (if we didn't use ffmpeg)
     if not ffmpeg_available:
         final_duration = round(orig_duration * 0.98, 3) 
 

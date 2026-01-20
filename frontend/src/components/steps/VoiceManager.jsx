@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mic, Sparkles, Activity, Volume2, RotateCcw, RefreshCw, FileAudio, CheckCircle, Trash2 } from 'lucide-react';
+import { Mic, Sparkles, Activity, Volume2, RotateCcw, Play, FileAudio, CheckCircle, Trash2 } from 'lucide-react';
 import { API_URL } from '../../config';
 
 export default function VoiceManager({ projectId, lastUpdated, projectData, onUpdate }) {
@@ -7,6 +7,7 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
     const [voiceFiles, setVoiceFiles] = useState([]);
     const [selectedProfile, setSelectedProfile] = useState('');
     const [speed, setSpeed] = useState(1.0);
+    const [style, setStyle] = useState('Read aloud in a warm and friendly tone');
     const [generating, setGenerating] = useState(false);
     const [loading, setLoading] = useState(true);
 
@@ -21,7 +22,7 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
             setProfiles(profs);
             setVoiceFiles(files);
             if (profs.length > 0 && !selectedProfile) {
-                const defaultProf = profs.find(p => p.id === 'oa_echo') || profs[0];
+                const defaultProf = profs.find(p => p.id === 'gm_sadaltager') || profs[0];
                 setSelectedProfile(defaultProf.id);
             }
             setLoading(false);
@@ -55,7 +56,8 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
                 text: scriptText,
                 provider: profile.service,
                 voice: profile.voice || profile.lang || 'th',
-                speed: parseFloat(speed)
+                speed: parseFloat(speed),
+                style: profile.service === 'gemini' ? style : undefined
             };
 
             const res = await fetch(`${API_URL}/projects/${projectId}/voice/generate`, {
@@ -111,8 +113,8 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
                     </h2>
                     <p className="text-sm text-gray-500 mt-2 ml-11">Generate AI narration from your script.</p>
                 </div>
-                <div className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold uppercase tracking-wide border border-indigo-100 flex items-center gap-2">
-                    <Sparkles size={14} className="text-indigo-500" /> AI Neural Engine Ready
+                <div className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-xs font-black uppercase tracking-wider border border-indigo-100 flex items-center gap-2 shadow-sm">
+                    <Sparkles size={14} className="text-indigo-500" /> Powered by Gemini 2.5 TTS
                 </div>
             </div>
 
@@ -130,30 +132,31 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
                                 <div
                                     key={p.id}
                                     onClick={() => setSelectedProfile(p.id)}
-                                    className={`relative p-5 rounded-xl border-2 cursor-pointer transition-all group ${selectedProfile === p.id ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-0' : 'border-gray-100 hover:border-gray-300 hover:bg-gray-50 hover:shadow-sm'}`}
+                                    className={`relative p-5 rounded-2xl border-2 cursor-pointer transition-all group ${selectedProfile === p.id ? 'border-indigo-600 bg-indigo-50/30 shadow-md ring-0 z-10 scale-[1.02]' : 'border-gray-100 hover:border-gray-200 hover:bg-white hover:shadow-sm'}`}
                                 >
                                     <div className="flex flex-col gap-2">
                                         <div className="flex justify-between items-start">
-                                            <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wide ${p.service === 'openai' ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-gray-100 text-gray-600 border border-gray-200'}`}>
+                                            <span className="text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest bg-indigo-100 text-indigo-700 border border-indigo-200">
                                                 {p.service}
                                             </span>
                                             {p.preview && (
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); new Audio(`${API_URL}${p.preview}`).play(); }}
-                                                    className="p-2 bg-white text-indigo-600 rounded-full shadow-sm hover:bg-indigo-600 hover:text-white transition-all border border-gray-100"
-                                                    title="Preview Voice"
+                                                    className="p-1.5 bg-white text-indigo-600 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all border border-gray-100"
                                                 >
-                                                    <Volume2 size={14} />
+                                                    <Volume2 size={12} />
                                                 </button>
                                             )}
                                         </div>
                                         <div>
-                                            <div className="font-bold text-gray-900 text-base">{p.name}</div>
-                                            <div className="text-xs text-gray-500 font-medium mt-0.5">{p.tone}</div>
+                                            <div className="font-black text-gray-900 text-base tracking-tight">{p.name}</div>
+                                            <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">{p.tone}</div>
                                         </div>
                                     </div>
                                     {selectedProfile === p.id && (
-                                        <div className="absolute top-2 right-2 w-3 h-3 bg-indigo-600 rounded-full border-2 border-white shadow-sm"></div>
+                                        <div className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-indigo-600 rounded-full border-[3px] border-white shadow-lg flex items-center justify-center text-white">
+                                            <CheckCircle size={10} strokeWidth={4} />
+                                        </div>
                                     )}
                                 </div>
                             ))}
@@ -181,28 +184,48 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
                             </div>
                         </div>
 
+                        {/* Style Control (Mandatory for Gemini) */}
+                        <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-xl shadow-gray-50/50 space-y-4">
+                            <label className="flex items-center gap-2 text-xs font-black text-gray-400 uppercase tracking-[0.2em] px-1">
+                                <Sparkles size={14} className="text-indigo-500" /> Style & Tone Instructions (Thai Default)
+                            </label>
+                            <div className="relative group">
+                                <input
+                                    type="text"
+                                    value={style}
+                                    onChange={(e) => setStyle(e.target.value)}
+                                    className="w-full h-14 pl-12 pr-6 bg-gray-50 border-none rounded-2xl focus:ring-4 focus:ring-indigo-100 transition-all text-gray-800 font-bold shadow-inner"
+                                    placeholder="เช่น ตื่นเต้น, น่าเชื่อถือ, หรือนุ่มนวล..."
+                                />
+                                <Sparkles size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-400" />
+                            </div>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider ml-1">
+                                บรรยายอารมณ์หรือสไตล์การพูดเพื่อให้ AI ประมวลผลได้แม่นยำขึ้น
+                            </p>
+                        </div>
+
                         <button
                             onClick={handleGenerate}
                             disabled={generating}
-                            className="w-full h-14 bg-gray-900 text-white font-bold rounded-xl hover:bg-black disabled:opacity-50 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all uppercase tracking-wide text-sm"
+                            className="w-full h-16 bg-gray-900 text-white font-black rounded-2xl hover:bg-black disabled:opacity-50 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all uppercase tracking-widest text-sm active:scale-95"
                         >
-                            {generating ? <RotateCcw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                            {generating ? 'GENERATING VOICE...' : 'GENERATE VOICE'}
+                            {generating ? <RotateCcw size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />}
+                            {generating ? 'Processing AI Audio...' : 'Generate Neural Voice'}
                         </button>
                     </div>
                 </div>
 
                 {/* Generated Files */}
-                <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-200">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-6 flex items-center gap-2">
-                        <FileAudio size={14} /> Generated Takes
+                <div className="bg-gray-50/50 p-8 rounded-[2rem] border border-gray-100">
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em] mb-10 flex items-center gap-2 px-2">
+                        <FileAudio size={16} className="text-indigo-400" /> Professional Takes
                     </h3>
-                    <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="space-y-6 max-h-[700px] overflow-y-auto pr-2 custom-scrollbar">
                         {voiceFiles.length === 0 ? (
-                            <div className="text-center py-24 text-gray-400 text-sm flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white">
-                                <div className="p-4 bg-gray-50 rounded-full mb-4 text-gray-300"><Mic size={32} /></div>
-                                <span className="font-bold text-gray-500">No voice takes yet</span>
-                                <span className="text-xs text-gray-400 mt-1">Generate your first take to see it here.</span>
+                            <div className="text-center py-32 text-gray-400 text-sm flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-[2rem] bg-white shadow-inner">
+                                <div className="p-6 bg-gray-50 rounded-full mb-6 text-gray-200"><Mic size={48} /></div>
+                                <span className="font-black text-gray-900 uppercase tracking-widest text-xs">No takes registered</span>
+                                <span className="text-[10px] text-gray-400 mt-2 font-bold uppercase tracking-widest">Generate from script above</span>
                             </div>
                         ) : (
                             voiceFiles.map((file, idx) => {
@@ -210,46 +233,45 @@ export default function VoiceManager({ projectId, lastUpdated, projectData, onUp
                                 return (
                                     <div
                                         key={idx}
-                                        className={`bg-white p-5 rounded-xl border transition-all ${isActive ? 'border-green-400 shadow-md ring-1 ring-green-100' : 'border-gray-200 shadow-sm hover:border-gray-300'}`}
+                                        className={`bg-white p-6 rounded-3xl border transition-all ${isActive ? 'border-green-400 shadow-xl shadow-green-50 ring-4 ring-green-100/30' : 'border-gray-50 shadow-sm hover:border-gray-200'}`}
                                     >
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className={`p-3 rounded-xl ${isActive ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'}`}>
-                                                    {isActive ? <CheckCircle size={20} /> : <FileAudio size={20} />}
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div className="flex items-center gap-5">
+                                                <div className={`p-4 rounded-2xl ${isActive ? 'bg-green-600 text-white shadow-lg shadow-green-100' : 'bg-gray-900 text-white shadow-lg shadow-gray-100'}`}>
+                                                    {isActive ? <CheckCircle size={24} /> : <Volume2 size={24} />}
                                                 </div>
                                                 <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-sm font-bold text-gray-900 max-w-[180px] truncate" title={file.filename}>{file.filename}</div>
-                                                        {isActive && <span className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded font-bold uppercase tracking-wide">Active</span>}
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="text-sm font-black text-gray-900 max-w-[200px] truncate tracking-tight" title={file.filename}>{file.filename}</div>
+                                                        {isActive && <span className="text-[9px] bg-green-500 text-white px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Active</span>}
                                                     </div>
-                                                    <div className="text-xs text-gray-500 mt-1 flex items-center gap-2 font-mono">
-                                                        {file.label ? <span className="text-blue-600 font-bold bg-blue-50 px-1.5 rounded">{file.label}</span> :
-                                                            <span className="flex items-center gap-1"><span className="font-bold text-gray-400">ID:</span> {file.profile_id} <span className="text-gray-300">|</span> <span className="font-bold text-gray-400">SPD:</span> {file.speed}x</span>}
+                                                    <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-2 font-black uppercase tracking-widest">
+                                                        {file.label ? <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{file.label}</span> :
+                                                            <span className="flex items-center gap-1">Model: {file.profile_id} <span className="text-gray-200 mx-1">/</span> Speed: {file.speed}x</span>}
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-3 px-1 pt-1">
                                                 {!isActive && (
                                                     <>
                                                         <button
                                                             onClick={() => handleActivate(file.filename)}
-                                                            className="text-xs font-bold text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition border border-blue-100 hover:border-blue-200"
+                                                            className="h-10 px-4 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 transition shadow-lg shadow-indigo-100"
                                                         >
-                                                            Use This
+                                                            Select Take
                                                         </button>
                                                         <button
                                                             onClick={() => handleDelete(file.filename)}
-                                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                                                            title="Delete Take"
+                                                            className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition"
                                                         >
-                                                            <Trash2 size={16} />
+                                                            <Trash2 size={18} />
                                                         </button>
                                                     </>
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="bg-gray-50/80 p-3 rounded-lg border border-gray-100">
-                                            <audio controls className="w-full h-8" src={`${API_URL}${file.url}?t=${new Date(projectData.last_updated).getTime()}`}>
+                                        <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 shadow-inner">
+                                            <audio controls className="w-full h-10" src={`${API_URL}${file.url}?t=${new Date(projectData.last_updated).getTime()}`}>
                                                 Your browser does not support audio.
                                             </audio>
                                         </div>

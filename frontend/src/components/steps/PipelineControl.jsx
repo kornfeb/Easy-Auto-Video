@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Play, ShieldCheck, FileText, FileAudio, Image as ImageIcon, FileVideo, Activity, AlertCircle, RotateCcw } from 'lucide-react';
+import {
+    Clock, Play, ShieldCheck, FileText, FileAudio, Image as ImageIcon,
+    FileVideo, Activity, AlertCircle, RotateCcw, Sparkles, Mic, Volume2, Film
+} from 'lucide-react';
 import { API_URL } from '../../config';
 
 export default function PipelineControl({ project, onUpdate }) {
@@ -77,11 +80,14 @@ export default function PipelineControl({ project, onUpdate }) {
     };
 
     const getIcon = (id) => {
-        if (id.includes('validate')) return ShieldCheck;
+        if (id.includes('cover')) return ImageIcon;
+        if (id.includes('hook')) return Sparkles;
         if (id.includes('script')) return FileText;
-        if (id.includes('tts')) return FileAudio;
-        if (id.includes('image')) return ImageIcon;
-        if (id.includes('video') || id.includes('stitch')) return FileVideo;
+        if (id.includes('tts')) return Mic;
+        if (id.includes('audio_mix')) return Volume2;
+        if (id.includes('timeline')) return Film;
+        if (id.includes('dryrun')) return ShieldCheck;
+        if (id.includes('render')) return FileVideo;
         return Activity;
     };
 

@@ -59,7 +59,7 @@ export default function ScriptEditor({ projectId, lastUpdated, projectData, onUp
             const res = await fetch(`${API_URL}/projects/${projectId}/run`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ step_name: 'script_gen' })
+                body: JSON.stringify({ step_name: '03_script_gen' })
             });
 
             if (res.ok) {
@@ -76,7 +76,7 @@ export default function ScriptEditor({ projectId, lastUpdated, projectData, onUp
         }
     };
 
-    const status = projectData.pipeline?.script_gen?.status || 'PENDING';
+    const status = projectData.pipeline?.['03_script_gen']?.status || 'PENDING';
 
     return (
         <div className="max-w-5xl mx-auto space-y-8">

@@ -12,26 +12,28 @@ const createMedia = (url) =>
         media.setAttribute('crossOrigin', 'anonymous');
 
         const timeout = setTimeout(() => {
-            reject(new Error("Media load timeout (10s)"));
-        }, 10000);
+            reject(new Error("Media load timeout (15s)"));
+        }, 15000);
 
         if (isVideo) {
             media.addEventListener('loadeddata', () => {
                 clearTimeout(timeout);
+                // For videos, we sometimes need to seek slightly to ensure a frame is rendered
+                if (media.currentTime === 0) media.currentTime = 0.1;
                 resolve(media);
             }, { once: true });
             media.muted = true;
             media.playsInline = true;
         } else {
-            if (media.complete) {
+            media.addEventListener('load', () => {
                 clearTimeout(timeout);
-                resolve(media);
-            } else {
-                media.addEventListener('load', () => {
-                    clearTimeout(timeout);
+                // Final check for valid content
+                if (media.naturalWidth === 0 || media.naturalHeight === 0) {
+                    reject(new Error("Image loaded but has 0 dimensions."));
+                } else {
                     resolve(media);
-                }, { once: true });
-            }
+                }
+            }, { once: true });
         }
 
         media.addEventListener('error', (err) => {
@@ -44,51 +46,52 @@ const createMedia = (url) =>
     });
 
 async function getCroppedImg(imageSrc, pixelCrop, mimeType = 'image/jpeg') {
+    console.log("--- Generating Crop ---");
+    console.log("Source:", imageSrc);
+    console.log("PixelCrop:", pixelCrop);
+
     if (!pixelCrop || !pixelCrop.width || !pixelCrop.height) {
-        console.error("getCroppedImg received invalid pixelCrop:", pixelCrop);
-        throw new Error("Crop dimensions are missing. Please try adjusting the crop area.");
+        throw new Error("Invalid crop dimensions.");
     }
 
     const media = await createMedia(imageSrc);
 
-    // Strict safety check for dimensions
-    const width = Math.floor(pixelCrop.width);
-    const height = Math.floor(pixelCrop.height);
+    // Log natural dimensions for debugging
+    const nw = (media.naturalWidth || media.videoWidth);
+    const nh = (media.naturalHeight || media.videoHeight);
+    console.log("Natural Dimensions:", nw, "x", nh);
 
-    if (isNaN(width) || isNaN(height) || width <= 0 || height <= 0) {
-        console.error("Invalid dimensions after floor:", { width, height, original: pixelCrop });
-        throw new Error(`Invalid crop dimensions: ${width}x${height}. Please resize the crop area.`);
-    }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
 
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error("Could not get canvas context");
 
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = Math.floor(pixelCrop.width);
+    canvas.height = Math.floor(pixelCrop.height);
 
-    try {
-        ctx.drawImage(
-            media,
-            pixelCrop.x,
-            pixelCrop.y,
-            pixelCrop.width,
-            pixelCrop.height,
-            0,
-            0,
-            width,
-            height
-        );
-    } catch (e) {
-        console.error("Canvas drawImage failed:", e);
-        throw new Error("Failed to render crop: " + e.message);
-    }
+    // Draw the image/video to the canvas
+    ctx.drawImage(
+        media,
+        pixelCrop.x,
+        pixelCrop.y,
+        pixelCrop.width,
+        pixelCrop.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
 
     return new Promise((resolve, reject) => {
         canvas.toBlob((blob) => {
-            if (!blob) {
-                console.error("Canvas toBlob null. Dimensions:", width, height);
-                return reject(new Error("Image processing failed (Empty Output)."));
+            if (!blob) return reject(new Error("Canvas toBlob failed."));
+
+            console.log("Generated Blob Size:", blob.size, "bytes");
+            // If blob is suspiciously small, it might be a black/empty image
+            if (blob.size < 500) {
+                console.warn("Suspiciously small blob detected!");
             }
+
             resolve(blob);
         }, mimeType, 0.95);
     });
@@ -249,9 +252,33 @@ export default function ImageProcessor({ projectId, assets, onUpdate, onClose, i
                 setEditMode('view');
                 setActiveImage(null);
                 console.log("Overlay Closed.");
+            } else if (projectId) {
+                console.log("Uploading cropped result to project:", projectId);
+                setStatusText("UPLOADING TO STORAGE...");
+
+                const formData = new FormData();
+                // Ensure we use the original filename to trigger the backend's backup-and-overwrite logic
+                formData.append('file', croppedImageBlob, activeImage);
+
+                const res = await fetch(`${API_URL}/projects/${projectId}/upload/image?auto_normalize=false`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    console.log("Manual Crop Upload Successful.");
+                    if (onUpdate) onUpdate();
+
+                    // Close Overlay
+                    setEditMode('view');
+                    setActiveImage(null);
+                } else {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Failed to save cropped image to server.");
+                }
             } else {
-                console.warn("onCropDone callback is missing!");
-                alert("Internal Error: Capture logic not connected.");
+                console.warn("No capture target: onCropDone and projectId are both missing!");
+                alert("Internal Error: Nowhere to save the crop result.");
             }
         } catch (e) {
             console.error("CAPTURE FAILED:", e);

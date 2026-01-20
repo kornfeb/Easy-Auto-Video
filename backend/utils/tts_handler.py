@@ -19,24 +19,19 @@ def get_openai_client():
     except ImportError:
         return None
 
-# Real Voice Profiles
+# Real Voice Profiles (100% Gemini Next-Gen)
 VOICE_PROFILES = [
-    # Google (gTTS)
-    {"id": "g_th_std", "name": "Google Standard", "service": "gtts", "lang": "th", "gender": "neutral", "tone": "Balanced", "preview": "/static/previews/natural_1.mp3"},
-    {"id": "g_th_news", "name": "Google News Style", "service": "gtts", "lang": "th", "gender": "female", "tone": "Formal & Clear", "preview": "/static/previews/female_1.mp3"},
-    {"id": "g_th_warm", "name": "Google Warm Thai", "service": "gtts", "lang": "th", "gender": "male", "tone": "Friendly & Soft", "preview": "/static/previews/male_1.mp3"},
-    
-    # OpenAI (Premium)
-    {"id": "oa_alloy", "name": "OpenAI Alloy", "service": "openai", "voice": "alloy", "gender": "neutral", "tone": "Versatile & Warm", "preview": "/static/previews/natural_1.mp3"},
-    {"id": "oa_nova", "name": "OpenAI Nova", "service": "openai", "voice": "nova", "gender": "female", "tone": "Dynamic & Energetic", "preview": "/static/previews/female_1.mp3"},
-    {"id": "oa_echo", "name": "OpenAI Echo", "service": "openai", "voice": "echo", "gender": "male", "tone": "Deep & Confident", "preview": "/static/previews/male_1.mp3"},
-    {"id": "oa_shimmer", "name": "OpenAI Shimmer", "service": "openai", "voice": "shimmer", "gender": "female", "tone": "Bright & Professional", "preview": "/static/previews/female_1.mp3"}
+    {"id": "gm_puck", "name": "Gemini Puck", "service": "gemini", "voice": "Puck", "gender": "male", "tone": "Energetic & Fast", "preview": "/static/previews/natural_1.mp3"},
+    {"id": "gm_charon", "name": "Gemini Charon", "service": "gemini", "voice": "Charon", "gender": "male", "tone": "Deep & Narrative", "preview": "/static/previews/natural_1.mp3"},
+    {"id": "gm_zephyr", "name": "Gemini Zephyr", "service": "gemini", "voice": "Zephyr", "gender": "female", "tone": "Neutral & Natural", "preview": "/static/previews/female_1.mp3"},
+    {"id": "gm_aoede", "name": "Gemini Aoede", "service": "gemini", "voice": "Aoede", "gender": "female", "tone": "Clear & Professional", "preview": "/static/previews/female_1.mp3"},
+    {"id": "gm_kore", "name": "Gemini Kore", "service": "gemini", "voice": "Kore", "gender": "female", "tone": "Bright & Friendly", "preview": "/static/previews/female_1.mp3"},
+    {"id": "gm_fenrir", "name": "Gemini Fenrir", "service": "gemini", "voice": "Fenrir", "gender": "male", "tone": "Deep & Authoritative", "preview": "/static/previews/male_1.mp3"},
+    {"id": "gm_sadaltager", "name": "Gemini Sadaltager", "service": "gemini", "voice": "Sadaltager", "gender": "male", "tone": "Smooth & Resonant", "preview": "/static/previews/male_1.mp3"}
 ]
 
 def get_voice_profiles():
-    # Filter OpenAI profiles if API key is missing
-    if not os.environ.get("OPENAI_API_KEY"):
-        return [p for p in VOICE_PROFILES if p["service"] == "gtts"]
+    # Only return Gemini profiles as it's the primary system now
     return VOICE_PROFILES
 
 def delete_voice_file(project_path, filename):
@@ -112,7 +107,7 @@ def sanitize_text(text):
     # Only keep alphanumeric, Thai, spaces, and standard punctuation [.,!?]
     return re.sub(r'[^\w\sก-๙.,!?]', '', text)
 
-def generate_voice(project_id, project_path, script_content, profile_id="oa_echo", speed=1.0, provider=None, voice_name=None):
+def generate_voice(project_id, project_path, script_content, profile_id="oa_echo", speed=1.0, provider=None, voice_name=None, style_instructions=None):
     """
     Generates a voice audio file using real TTS services.
     Validates output integrity before confirming success.
@@ -126,9 +121,9 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
     audio_file = os.path.join(audio_dir, filename)
     
     # Load Project Settings
-    pause_breathing = True
-    silence_start = 1.5
-    silence_end = 1.5
+    pause_breathing = False
+    silence_start = 0.0
+    silence_end = 0.0
     
     project_json_path = os.path.join(project_path, "project.json")
     if os.path.exists(project_json_path):
@@ -138,12 +133,12 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
                 settings = pdata.get("settings", {})
                 
                 # Breathing Pause
-                pause_breathing = settings.get("voice", {}).get("breathing_pause", True)
+                pause_breathing = settings.get("voice", {}).get("breathing_pause", False)
                 
                 # Silence Padding
                 video_settings = settings.get("video", {})
-                silence_start = video_settings.get("intro_silence", 1.5)
-                silence_end = video_settings.get("outro_silence", 1.5)
+                silence_start = video_settings.get("intro_silence", 0.0)
+                silence_end = video_settings.get("outro_silence", 0.0)
         except:
             pass
 
@@ -201,6 +196,24 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
                     response.stream_to_file(temp_file)
             else:
                 raise ValueError("OpenAI API Key missing")
+        elif active_provider == "gemini":
+            from utils.gemini_tts import generate_gemini_tts
+            # Log script stats
+            char_count = len(re.sub(r'[^\u0E00-\u0E7F]', '', script_content))
+            word_count = len(script_content.replace(" ", "").replace("\n", "")) // 4
+            log_event(project_path, "pipeline.log", 
+                     f"[TTS] [GEMINI] Script: {char_count} Thai chars, {word_count} words")
+            
+            # Use provided style_instructions or default
+            effective_style = style_instructions or "Read aloud in a warm and friendly tone"
+            
+            audio_data = generate_gemini_tts(
+                text=script_content,
+                voice_name=active_voice or "Puck",
+                style_instructions=effective_style
+            )
+            with open(temp_file, "wb") as f:
+                f.write(audio_data)
         else:
             raise ValueError(f"Unknown provider: {active_provider}")
             

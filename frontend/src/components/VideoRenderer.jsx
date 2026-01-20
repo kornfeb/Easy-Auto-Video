@@ -47,7 +47,7 @@ export default function VideoRenderer({ projectId, lastUpdated, projectData, onU
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8">
+        <div className="max-w-6xl mx-auto space-y-8" data-section="video-preview">
             <div className="flex justify-between items-end border-b border-gray-100 pb-6">
                 <div>
                     <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">

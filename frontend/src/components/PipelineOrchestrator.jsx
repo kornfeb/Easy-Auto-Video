@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Loader, AlertCircle, CheckCircle, X, RotateCcw } from 'lucide-react';
+import { Play, Loader, AlertCircle, CheckCircle, X, RotateCcw, Download, Video } from 'lucide-react';
 import { API_URL } from '../config';
 
 export default function PipelineOrchestrator({ projectId, projectStatus, onUpdate }) {
@@ -43,8 +43,16 @@ export default function PipelineOrchestrator({ projectId, projectStatus, onUpdat
                         // Job finished (completed or failed)
                         stopPolling();
                         if (data.status === 'completed' && job?.status === 'running') {
-                            // Just finished
+                            // Just finished - refresh and scroll to video
                             onUpdate();
+
+                            // Wait for DOM update then scroll to video section
+                            setTimeout(() => {
+                                const videoSection = document.querySelector('[data-section="video-preview"]');
+                                if (videoSection) {
+                                    videoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }
+                            }, 500);
                         }
                     }
                 } else {
@@ -173,15 +181,45 @@ export default function PipelineOrchestrator({ projectId, projectStatus, onUpdat
 
     // 4. Completed
     if (job.status === 'completed') {
+        const scrollToVideo = () => {
+            const videoSection = document.querySelector('[data-section="video-preview"]');
+            if (videoSection) {
+                videoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        };
+
         return (
             <div className="flex items-center gap-3 bg-green-50 border border-green-100 pl-4 pr-2 py-2 rounded-full shadow-sm animate-in fade-in slide-in-from-top-2">
                 <div className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center flex-none">
                     <CheckCircle size={18} />
                 </div>
-                <div className="flex flex-col mr-4">
+                <div className="flex flex-col mr-2">
                     <span className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Complete</span>
                     <span className="text-xs font-bold text-gray-800">Video Generated</span>
                 </div>
+
+                <div className="flex items-center gap-1 border-l border-green-200 pl-3 ml-1">
+                    <button
+                        onClick={scrollToVideo}
+                        className="p-1.5 hover:bg-green-100 rounded-lg text-green-700 transition flex items-center gap-1.5"
+                        title="View Video"
+                    >
+                        <Video size={14} />
+                        <span className="text-xs font-bold">View</span>
+                    </button>
+                    <a
+                        href={`${API_URL}/projects/${projectId}/download/video`}
+                        download
+                        className="p-1.5 hover:bg-green-100 rounded-lg text-green-700 transition flex items-center gap-1.5"
+                        title="Download MP4"
+                    >
+                        <Download size={14} />
+                        <span className="text-xs font-bold">Download</span>
+                    </a>
+                </div>
+
+                <div className="w-px h-6 bg-green-200 mx-1"></div>
+
                 <button
                     onClick={handleDismiss}
                     className="p-2 hover:bg-white rounded-full text-green-600 transition hover:shadow-sm"

@@ -1,6 +1,7 @@
 import os
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
+import utils.crop_manager as crop_manager
 
 # Font mapping for Mac (Extendable)
 FONTS = {
@@ -187,6 +188,16 @@ def render_cover_overlay(project_path, overlay_config):
     # Save
     img = img.convert("RGB")
     img.save(final_path, quality=95)
+    # REVERTED: Do NOT sync final cover back to input gallery as 999.jpg
+    # try:
+    #     import shutil
+    #     input_dir = os.path.join(project_path, "input")
+    #     for f in os.listdir(input_dir):
+    #         if f.startswith("999."):
+    #             try: os.remove(os.path.join(input_dir, f))
+    #             except: pass
+    #     shutil.copy2(final_path, os.path.join(input_dir, "999.jpg"))
+    # except: pass
     
     return {"status": "OK", "file": "cover.jpg"}
 
@@ -194,7 +205,83 @@ def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
-def resize_image_logic(img, target_width, target_height, mode="fit", bg_color="#FFA500"):
+def calculate_smart_crop(img_w, img_h, roi, target_ratio=0.5625):
+    """
+    Calculates the best crop box for a target ratio (default 9:16)
+    ensuring the ROI (normalized 0-1000) is preserved.
+    """
+    # Convert normalized ROI to pixel coordinates
+    ry1 = roi['ymin'] * img_h / 1000
+    rx1 = roi['xmin'] * img_h / 1000 # Wait, vision usually uses height for both if normalized? 
+                                     # Actually Gemini uses 0-1000 relative to H and W.
+    rx1 = roi['xmin'] * img_w / 1000
+    ry2 = roi['ymax'] * img_h / 1000
+    rx2 = roi['xmax'] * img_w / 1000
+    
+    roi_w = rx2 - rx1
+    roi_h = ry2 - ry1
+    roi_cx = rx1 + roi_w / 2
+    roi_cy = ry1 + roi_h / 2
+    
+    # Target Box Dimensions
+    if (img_w / img_h) > target_ratio:
+        # Original is wider than 9:16 (Landscape)
+        # We MUST crop horizontal sides
+        crop_h = img_h
+        crop_w = int(crop_h * target_ratio)
+    else:
+        # Original is taller than 9:16
+        # We MUST crop vertical sides
+        crop_w = img_w
+        crop_h = int(crop_w / target_ratio)
+        
+    # Center the crop box on the ROI's center
+    left = roi_cx - crop_w / 2
+    top = roi_cy - crop_h / 2
+    
+    # Boundary checks (Clamping)
+    if left < 0: left = 0
+    if top < 0: top = 0
+    if left + crop_w > img_w: left = img_w - crop_w
+    if top + crop_h > img_h: top = img_h - crop_h
+    
+    return (int(left), int(top), int(left + crop_w), int(top + crop_h))
+
+def normalize_image_to_916(img, bg_color="#000000", roi_data=None):
+    """
+    Normalizes an image to 9:16 (1080x1920) based on specific rules:
+    - If roi_data is provided: Perform AI Smart Crop.
+    - If Landscape/Square (No ROI): Pad to fit.
+    - If Portrait (No ROI): Minor crop if close, else pad.
+    """
+    target_w, target_h = 1080, 1920
+    target_ratio = target_w / target_h # 0.5625
+    img_ratio = img.width / img.height
+    
+    # 1. AI Smart Crop (If ROI is available and reliable)
+    if roi_data and roi_data.get('roi'):
+        roi = roi_data['roi']
+        crop_box = calculate_smart_crop(img.width, img.height, roi, target_ratio)
+        img = img.crop(crop_box)
+        return img.resize((target_w, target_h), Image.LANCZOS)
+
+    # 2. Heuristic fallback (Previous logic)
+    if abs(img_ratio - target_ratio) < 0.01:
+        return img.resize((target_w, target_h), Image.LANCZOS)
+    
+    if img_ratio > target_ratio:
+        return resize_image_logic(img, target_w, target_h, mode="fit", bg_color=bg_color)
+    
+    if img_ratio < target_ratio:
+        loss_percentage = (target_ratio - img_ratio) / target_ratio
+        if loss_percentage < 0.15:
+            return resize_image_logic(img, target_w, target_h, mode="fill", bg_color=bg_color)
+        else:
+            return resize_image_logic(img, target_w, target_h, mode="fit", bg_color=bg_color)
+
+    return resize_image_logic(img, target_w, target_h, mode="fit", bg_color=bg_color)
+
+def resize_image_logic(img, target_width, target_height, mode="fit", bg_color="#000000"):
     """
     Core logic for resizing a single PIL Image.
     mode: 'fit' (pad with color), 'fill' (crop center)
@@ -206,54 +293,165 @@ def resize_image_logic(img, target_width, target_height, mode="fit", bg_color="#
     new_img = Image.new("RGB", (target_width, target_height), bg_rgb)
     
     if mode == "fill":
-        # Crop Strategy
         if original_ratio > target_ratio:
-            # Image is wider than target -> Crop sides
             scale_height = target_height
             scale_width = int(scale_height * original_ratio)
         else:
-            # Image is taller/same -> Crop top/bottom
             scale_width = target_width
             scale_height = int(scale_width / original_ratio)
             
         img_resized = img.resize((scale_width, scale_height), Image.LANCZOS)
-        
-        # Center Crop
         left = (scale_width - target_width) // 2
         top = (scale_height - target_height) // 2
-        
         new_img.paste(img_resized, (-left, -top))
-        
     else:
-        # Fit Strategy (Pad)
         if original_ratio > target_ratio:
-            # Image is wider -> Fit width, pad height
             scale_width = target_width
             scale_height = int(scale_width / original_ratio)
         else:
-            # Image is taller -> Fit height, pad width
             scale_height = target_height
             scale_width = int(scale_height * original_ratio)
             
         img_resized = img.resize((scale_width, scale_height), Image.LANCZOS)
-        
-        # Center Place
         x = (target_width - scale_width) // 2
         y = (target_height - scale_height) // 2
-        
         new_img.paste(img_resized, (x, y))
         
     return new_img
 
+def normalize_video_to_916(input_path, output_path, bg_color="#000000"):
+    """
+    Uses FFmpeg to normalize video to 9:16 (1080x1920).
+    Follows preservation rules:
+    - Landscape: fit + pad
+    - Portrait: scale + minor crop if needed
+    """
+    # Hex to FFmpeg color (e.g., #FFA500 -> 0xFFA500)
+    color = bg_color.replace("#", "0x")
+    
+    # FFmpeg filter complex:
+    # 1. Scale to fit height if portrait, or width if landscape
+    # 2. Pad to 1080:1920
+    # For simplicity and robust rules, we use 'force_original_aspect_ratio=decrease' for padding
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:{color}",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "copy",
+        output_path
+    ]
+    
+    import subprocess
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"FFmpeg normalization failed: {e}")
+        return False
+
+def normalize_asset(project_path, filename, bg_color="#000000", ai_smart_crop=False):
+    """
+    High-level dispatcher to normalize any asset to 9:16.
+    """
+    input_dir = os.path.join(project_path, "input")
+    file_path = os.path.join(input_dir, filename)
+    
+    if not os.path.exists(file_path):
+        return False
+        
+    ext = filename.lower().split('.')[-1]
+    
+    roi_data = None
+    if ai_smart_crop:
+        from .ai_detector import detect_roi
+        # For videos, we analyze a middle frame
+        if ext in ['mp4', 'webm']:
+            # For simplicity, extract frame 0 for now as 'middle' is expensive to find accurately without full probe
+            # But the requirement says "middle frame". Let's try to get a frame at t=1s
+            temp_frame = file_path + ".frame.jpg"
+            import subprocess
+            subprocess.run(["ffmpeg", "-y", "-i", file_path, "-ss", "00:00:01", "-vframes", "1", temp_frame], capture_output=True)
+            if os.path.exists(temp_frame):
+                roi_data = detect_roi(temp_frame)
+                os.remove(temp_frame)
+        else:
+            roi_data = detect_roi(file_path)
+
+    if ext in ['jpg', 'jpeg', 'png', 'webp']:
+        try:
+            with Image.open(file_path) as img:
+                img = img.convert("RGB")
+                processed = normalize_image_to_916(img, bg_color, roi_data)
+                processed.save(file_path, quality=95)
+                
+                # Save Metadata
+                if roi_data and roi_data.get('roi'):
+                    crop_box = calculate_smart_crop(img.width, img.height, roi_data['roi'])
+                    crop_manager.save_crop(
+                        project_path, filename, 
+                        roi_data['roi'], 
+                        crop_box, 
+                        confidence=roi_data.get('confidence', 1.0),
+                        type=roi_data.get('type', 'unknown')
+                    )
+            return True
+        except:
+            return False
+            
+    elif ext in ['mp4', 'webm']:
+        temp_path = file_path + ".tmp.mp4"
+        
+        # If we have ROI, we apply smart crop in FFmpeg
+        crop_filter = ""
+        if roi_data and roi_data.get('roi'):
+            # This is complex in FFmpeg, we might just use the PIL logic to get box and then use 'crop' filter
+            # Let's get dimensions first
+            import subprocess
+            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", file_path], capture_output=True, text=True)
+            try:
+                w, h = map(int, probe.stdout.strip().split('x'))
+                box = calculate_smart_crop(w, h, roi_data['roi'])
+                # box is (x1, y1, x2, y2) -> crop=w:h:x:y
+                cw = box[2] - box[0]
+                ch = box[3] - box[1]
+                crop_filter = f"crop={cw}:{ch}:{box[0]}:{box[1]},"
+            except:
+                pass
+
+        color = bg_color.replace("#", "0x")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", file_path,
+            "-vf", f"{crop_filter}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:{color}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "copy",
+            temp_path
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            os.replace(temp_path, file_path)
+            
+            # Save Metadata
+            if roi_data and roi_data.get('roi'):
+                crop_manager.save_crop(
+                    project_path, filename, 
+                    roi_data['roi'], 
+                    box, 
+                    confidence=roi_data.get('confidence', 1.0),
+                    type=roi_data.get('type', 'unknown')
+                )
+            return True
+        except Exception as e:
+            print(f"FFmpeg normalization failed: {e}")
+            return False
+    return False
+
 def process_batch_images(project_path, image_names, config):
     """
-    Batch process images: resize, crop, pad.
-    config: {
-        "width": 1080,
-        "height": 1920,
-        "mode": "fit", # or "fill"
-        "bg_color": "#FFA500"
-    }
+    Batch process images: resize, crop, pad, or normalize.
     """
     input_dir = os.path.join(project_path, "input")
     results = []
@@ -261,7 +459,7 @@ def process_batch_images(project_path, image_names, config):
     target_w = int(config.get("width", 1080))
     target_h = int(config.get("height", 1920))
     mode = config.get("mode", "fit")
-    bg_color = config.get("bg_color", "#FFA500")
+    bg_color = config.get("bg_color", "#000000")
     
     for name in image_names:
         img_path = os.path.join(input_dir, name)
@@ -270,15 +468,22 @@ def process_batch_images(project_path, image_names, config):
             continue
             
         try:
-            with Image.open(img_path) as img:
-                img = img.convert("RGB") # Ensure RGB
-                processed_img = resize_image_logic(
-                    img, target_w, target_h, mode, bg_color
-                )
-                
-                # Overwrite
-                processed_img.save(img_path, quality=95)
-                results.append({"name": name, "status": "OK"})
+            if mode == "normalize":
+                ai_smart = config.get("ai_smart_crop", False)
+                success = normalize_asset(project_path, name, bg_color, ai_smart_crop=ai_smart)
+                if success:
+                    results.append({"name": name, "status": "OK"})
+                else:
+                    results.append({"name": name, "status": "FAIL", "error": "Normalization failed"})
+            else:
+                # Standard Resize/Crop
+                with Image.open(img_path) as img:
+                    img = img.convert("RGB")
+                    processed_img = resize_image_logic(
+                        img, target_w, target_h, mode, bg_color
+                    )
+                    processed_img.save(img_path, quality=95)
+                    results.append({"name": name, "status": "OK"})
                 
         except Exception as e:
             results.append({"name": name, "status": "FAIL", "error": str(e)})
