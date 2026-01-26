@@ -1,0 +1,33 @@
+{
+  "video": {
+    "default_duration_sec": 40.0,
+    "intro_silence_sec": 0.0,
+    "outro_silence_sec": 0.0
+  },
+  "script": {
+    "prompt_template": "คุณเป็นนักเขียนบทโฆษณามืออาชีพ งานของคุณคือเขียนบทวิดีโอรีวิวสินค้า สำหรับสินค้าชื่อ: {{product_name}}\n\nใช้โครงสร้างตาม Template นี้:\nHOOK: [ประโยคเปิดตัว]\nBENEFIT 1: [จุดเด่นที่ 1]\nBENEFIT 2: [จุดเด่นที่ 2]\nCTA: กดใส่ตะกร้าไว้เลย ส่วนลดเยอะ!\n\nเงื่อนไขเคร่งครัด:\n- ใช้ภาษาไทยที่เป็นธรรมชาติ สไตล์เป็นกันเอง\n- ความยาวรวมทั้งหมดประมาณ {{word_count}} คำ\n- ห้ามใส่ Emoji และห้ามใส่หัวข้อ (เช่น HOOK:) ส่งเฉพาะตัวบทพูด\n- ใช้ประโยคสั้นๆ กระชับ",
+    "target_word_count": 40
+  },
+  "hook": {
+    "title_prompt_template": "Generate a short catchy product title",
+    "max_words": 9,
+    "max_characters": 40
+  },
+  "text_overlay": {
+    "title_max_characters": 40,
+    "subtitle_max_characters": 70,
+    "max_lines": 2
+  },
+  "music": {
+    "default_music_file": "carefree.mp3",
+    "default_volume_db": -16
+  },
+  "voice": {
+    "default_voice_profile": "random"
+  },
+  "cover": {
+    "default_color": "#FFFFFF",
+    "default_background": "box",
+    "default_position": "center"
+  }
+}

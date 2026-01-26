@@ -59,6 +59,10 @@ def set_active_voice(project_path, filename):
     if os.path.exists(source):
         import shutil
         shutil.copy2(source, target)
+        # Invalidate processed cache
+        processed_path = os.path.join(audio_dir, "voice_processed.mp3")
+        if os.path.exists(processed_path):
+            os.remove(processed_path)
         return True, "Voice set as active"
     return False, "Source file not found"
 
@@ -273,6 +277,10 @@ def generate_voice(project_id, project_path, script_content, profile_id="oa_echo
     default_voice = os.path.join(audio_dir, "voice.mp3")
     try:
         shutil.copy2(audio_file, default_voice)
+        # Invalidate processed cache
+        processed_path = os.path.join(audio_dir, "voice_processed.mp3")
+        if os.path.exists(processed_path):
+            os.remove(processed_path)
     except:
         pass
     

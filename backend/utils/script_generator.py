@@ -53,31 +53,33 @@ def generate_script(project_id, project_path):
     Reads settings from project.json for template and word count target.
     """
     
-    # Defaults
-    target_word_count = 40
-    prompt_template = ""
+    from core.global_settings import get_settings
     
-    # 1. Load Settings
+    settings = get_settings()
+    
+    # 1. Defaults from Global Settings
+    target_word_count = settings.script.target_word_count
+    prompt_template = settings.script.prompt_template
+    
+    # 2. Override with Project Settings (if available)
     project_json_path = os.path.join(project_path, "project.json")
     if os.path.exists(project_json_path):
         try:
             with open(project_json_path, 'r') as f:
                 pdata = json.load(f)
                 script_settings = pdata.get("settings", {}).get("script", {})
-                target_word_count = script_settings.get("word_count", 40)
-                prompt_template = script_settings.get("template", "")
+                
+                # Only override if explicitly set in project config (non-zero/non-empty)
+                if "word_count" in script_settings:
+                    target_word_count = script_settings.get("word_count")
+                if "template" in script_settings and script_settings.get("template"):
+                    prompt_template = script_settings.get("template")
         except:
             pass
 
-    # Fallback to file prompt if template is empty
+    # Fallback/Safety (if template is somehow still empty)
     if not prompt_template:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        prompt_path = os.path.join(base_dir, "script", "prompt.txt")
-        if os.path.exists(prompt_path):
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                prompt_template = f.read()
-        else:
-            prompt_template = "เขียนบทโฆษณาสำหรับ {{product_name}} ความยาว {{word_count}} คำ เน้นความน่าสนใจ"
+        prompt_template = "Write a short product review for {{product_name}}"
 
     # 2. Get Product Information
     product_name = "สินค้ายอดนิยม"

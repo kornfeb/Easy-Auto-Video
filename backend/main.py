@@ -16,16 +16,16 @@ mimetypes.init()
 mimetypes.add_type('audio/mpeg', '.mp3')
 mimetypes.add_type('audio/wav', '.wav')
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import quote
 
-from core.config import PROJECTS_DIR
+from core.config import PROJECTS_DIR, OUTPUT_DIR
 from core import project as project_utils
 from core.errors import PipelineError
 from core.logger import log_event
@@ -58,8 +58,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include Routers
+from routers.settings import router as settings_router
+app.include_router(settings_router)
+
 # Assets
 app.mount("/media", CORSStaticFiles(directory=PROJECTS_DIR), name="media")
+app.mount("/v_output", CORSStaticFiles(directory=OUTPUT_DIR), name="v_output")
 app.mount("/static", CORSStaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
 # --- SETTINGS MODELS ---
@@ -367,26 +372,42 @@ def render_project_video(project_id: str, request: RenderRequest):
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Generate custom output path
+    output_file = project_utils.get_video_output_path(project_path)
+
     result = render_video(
         project_path, 
         video_format=request.video_format,
         transition_id=request.transition_id,
-        transition_duration=request.transition_duration
+        transition_duration=request.transition_duration,
+        output_file=output_file
     )
     
     if result.get("status") == "FAIL":
         raise HTTPException(status_code=500, detail=result.get("error"))
         
+    result["final_video_path"] = output_file
     timestamp_update(project_path)
     return result
 
+
 @app.get("/projects/{project_id}/download/video")
-def download_project_video(project_id: str):
+def download_project_video(project_id: str, preview: bool = False):
     project_path = os.path.join(PROJECTS_DIR, project_id)
-    video_path = os.path.join(project_path, "output", "final_video.mp4")
+    
+    # 1. Try new standardized path
+    video_path = project_utils.get_video_output_path(project_path)
+    
+    # 2. Fallback to old path if not found
+    if not os.path.exists(video_path):
+        video_path = os.path.join(project_path, "output", "final_video.mp4")
     
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Video not found")
+
+    if preview:
+        # Serve inline for video player
+        return FileResponse(video_path, media_type="video/mp4")
         
     # Determine Resolution (using portable ffprobe if avail)
     resolution = "1080x1920" # Default
@@ -417,6 +438,25 @@ def download_project_video(project_id: str):
         media_type="video/mp4", 
         filename=filename
     )
+
+@app.get("/projects/{project_id}/output_path")
+def get_project_output_path(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        return {"exists": False, "path": None}
+        
+    path = project_utils.get_video_output_path(project_path)
+    exists = os.path.exists(path)
+    # If not found in new path, check old path just in case
+    if not exists:
+        old_path = os.path.join(project_path, "output", "final_video.mp4")
+        if os.path.exists(old_path):
+            path = old_path
+            exists = True
+            
+    return {"exists": exists, "path": path}
+
+
 
 @app.get("/projects/{project_id}/assets")
 def list_project_assets(project_id: str):
@@ -745,17 +785,25 @@ def cancel_pipeline_job(project_id: str):
         return {"status": "cancelled"}
     raise HTTPException(status_code=404, detail="No active running job found")
 
+@app.get("/api/tasks/background")
+def get_background_tasks():
+    from upload.downloader import get_active_tasks
+    return get_active_tasks()
+
+
+# Project Management
 # Project Management
 class ProjectInitRequest(BaseModel):
     project_id: str
-    product_name: str = None
-    product_url: str = None
-    image_urls: list[str] = []
+    product_name: Optional[str] = None
+    badge_name: Optional[str] = None
+    product_url: Optional[str] = None
+    image_urls: List[str] = []
 
 @app.post("/projects/initialize")
 def init_project(request: ProjectInitRequest):
     try:
-        data = project_utils.initialize_project_structure(request.project_id, request.product_name)
+        data = project_utils.initialize_project_structure(request.project_id, request.product_name, request.badge_name)
         
         # Save product_url if provided
         project_path = os.path.join(PROJECTS_DIR, request.project_id)
@@ -779,8 +827,92 @@ def init_project(request: ProjectInitRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+class BulkImportItem(BaseModel):
+    productName: str
+    productURL: str
+    images: List[str] = []
+    externalId: str
+    description: Optional[str] = ""
+    price: Optional[str] = ""
+    rating: Optional[str] = ""
+    reviewCount: Optional[str] = ""
+    soldCount: Optional[str] = ""
+    shopName: Optional[str] = ""
+    platform: Optional[str] = ""
+    projectName: Optional[str] = ""
+    badgeName: Optional[str] = ""
+    scrapedAt: Optional[str] = ""
+
+@app.post("/projects/bulk-import")
+def bulk_import_projects(items: List[BulkImportItem], background_tasks: BackgroundTasks):
+    results = []
+    import re
+    
+    for item in items:
+        try:
+            # Generate a stable project_id (prioritize externalId, then productName slug)
+            raw_id = item.externalId or item.productName
+            project_id = re.sub(r'[^\w-]', '_', raw_id).strip('_')
+            if not project_id:
+                 project_id = f"project_{datetime.now().strftime('%H%M%S')}"
+
+            # Initialize structure
+            resolved_badge_name = item.badgeName or item.projectName or "-"
+            project_utils.initialize_project_structure(project_id, item.productName, resolved_badge_name)
+            project_path = os.path.join(PROJECTS_DIR, project_id)
+            
+            # 1. Save all scrapped metadata to product.json
+            # Ensure we have "product_name" (snake_case) which the system expects
+            data_to_save = item.dict()
+            data_to_save["product_name"] = item.productName
+            data_to_save["product_url"] = item.productURL
+            
+            product_json_path = os.path.join(project_path, "input", "product.json")
+            with open(product_json_path, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+            
+            # 2. Update project.json with core info
+            json_path = os.path.join(project_path, "project.json")
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+                data["product_name"] = item.productName
+                data["product_url"] = item.productURL
+                data["external_id"] = item.externalId
+                data["badge_name"] = resolved_badge_name
+                with open(json_path, 'w') as f:
+                    json.dump(data, f, indent=2)
+
+            
+            # 3. Queue image downloads in background
+            if item.images:
+                from upload.downloader import download_images_from_urls
+                background_tasks.add_task(download_images_from_urls, project_id, item.images)
+                
+            results.append({
+                "project_id": project_id, 
+                "status": "initialized", 
+                "product_name": item.productName,
+                "images_count": len(item.images)
+            })
+        except Exception as e:
+            results.append({
+                "status": "failed", 
+                "error": str(e), 
+                "product": item.productName
+            })
+            
+    return {
+        "status": "ok", 
+        "total": len(items),
+        "imported": len([r for r in results if r["status"] == "initialized"]), 
+        "results": results
+    }
+
+
 class ProjectUpdateRequest(BaseModel):
     product_name: Optional[str] = None
+    badge_name: Optional[str] = None
     product_url: Optional[str] = None
 
 @app.put("/projects/{project_id}")
@@ -796,6 +928,9 @@ def update_project(project_id: str, request: ProjectUpdateRequest):
     if request.product_name is not None:
         data["product_name"] = request.product_name
     
+    if request.badge_name is not None:
+        data["badge_name"] = request.badge_name
+
     if request.product_url is not None:
         data["product_url"] = request.product_url
     
@@ -1016,8 +1151,8 @@ def save_project_script(project_id: str, request: ScriptSaveRequest):
     return {"message": "Script saved", "word_count": new_word_count}
 
 @app.get("/projects")
-def list_projects():
-    return project_utils.list_projects_metadata()
+def list_projects(page: int = 1, limit: int = 20, sort_by: str = "last_updated", order: str = "desc"):
+    return project_utils.list_projects_paged(page=page, limit=limit, sort_by=sort_by, order=order)
 
 class UpdateProductRequest(BaseModel):
     product_name: str

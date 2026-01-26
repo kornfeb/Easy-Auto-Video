@@ -2,6 +2,7 @@ import os
 import shutil
 from core.logger import log_event
 from core.errors import PipelineError
+from datetime import datetime
 from core.step_base import PipelineStep
 
 class CoverSelectionStep(PipelineStep):
@@ -18,10 +19,13 @@ class CoverSelectionStep(PipelineStep):
         if not os.path.exists(input_dir):
             raise PipelineError("Input folder missing", message_th="ไม่พบโฟลเดอร์ /input")
             
-        images = sorted([f for f in os.listdir(input_dir) if any(f.lower().endswith(ext) for ext in valid_exts) and f != "cover.jpg" and not f.startswith("ai_cover")])
+        from utils.sort_utils import sort_images_naturally
+        images = sort_images_naturally([f for f in os.listdir(input_dir) if any(f.lower().endswith(ext) for ext in valid_exts) and f != "cover.jpg" and not f.startswith("ai_cover")])
         
         if not images:
             raise PipelineError("No images found for cover", message_th="ไม่พบรูปภาพในโฟลเดอร์ /input")
+        
+        log_event(project_path, "pipeline.log", f"[STEP 01] Found {len(images)} images: {images}")
             
         # Select 2nd image if available, else 1st
         selected_image = images[1] if len(images) > 1 else images[0]
@@ -37,7 +41,14 @@ class CoverSelectionStep(PipelineStep):
         with open(project_json_path, 'r') as f:
             data = json.load(f)
         if "cover" not in data: data["cover"] = {}
-        data["cover"]["source_image_id"] = selected_image
+        data["cover"].update({
+            "source": "existing",
+            "source_image_id": selected_image,
+            "image_id": selected_image, # For frontend compatibility
+            "file_path": "cover.jpg",
+            "updated_at": datetime.now().isoformat()
+        })
+        data["last_updated"] = datetime.now().isoformat()
         with open(project_json_path, 'w') as f:
             json.dump(data, f, indent=2)
 

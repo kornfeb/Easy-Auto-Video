@@ -59,13 +59,26 @@ def generate_cover_text_ai(project_path, product_name, tone="engaging"):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.0-flash-exp') # Use faster model
         
+        from core.global_settings import get_settings
+        settings = get_settings()
+        
+        max_words = settings.hook.max_words
+        max_chars = settings.hook.max_characters
+        base_template = settings.hook.title_prompt_template
+        
+        log_event(project_path, "pipeline.log", f"[HOOK_GEN] Loaded settings: MaxWords={max_words}, MaxChars={max_chars}")
+
+        
         prompt = f"""
-        Generate 3 sets of "Short Title" and "Tagline" for a video cover about: "{product_name}".
-        Tone: {tone}.
-        Language: Thai.
-        Constraints:
-        - Title: 3-6 words, big impact, hook feeling.
-        - Tagline: Short, benefit-driven or emotional.
+        Action: {base_template}
+        Product: "{product_name}"
+        Tone: {tone}
+        Language: Thai
+        
+        Requirements:
+        1. Generate 3 pairs of "Title" (Hook) and "Subtitle" (Tagline).
+        2. Title Constraints: Maximum {max_words} words, Maximum {max_chars} characters.
+        3. Subtitle Constraints: Short, benefit-driven.
         
         Output JSON format:
         [

@@ -41,9 +41,15 @@ export default function ProjectLayout() {
     // Fetch Logic
     const loadProject = async () => {
         try {
-            const res = await fetch(`${API_URL}/projects`);
+            // Get projects with a large limit to ensure we find the one we need
+            // (Since the list might be paged on the backend)
+            const res = await fetch(`${API_URL}/projects?limit=1000`);
             const data = await res.json();
-            const found = data.find(p => p.project_id === id);
+
+            // The paginated response structure is { projects: [], total: ... }
+            const projectList = data.projects || data;
+            const found = projectList.find(p => p.project_id === id);
+
             setProject(found || null);
             setLoading(false);
         } catch (err) {
@@ -78,6 +84,25 @@ export default function ProjectLayout() {
 
         return () => observer.disconnect();
     }, [loading]);
+
+    // Auto-scroll to video section after auto-generation completes
+    useEffect(() => {
+        if (loading || !project) return;
+
+        const shouldScroll = localStorage.getItem('scrollToVideo');
+        if (shouldScroll === 'true') {
+            // Clear flag immediately
+            localStorage.removeItem('scrollToVideo');
+
+            // Wait for render then scroll
+            setTimeout(() => {
+                const renderSection = document.getElementById('section-render');
+                if (renderSection) {
+                    renderSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }, 800);
+        }
+    }, [loading, project]);
 
     const scrollToSection = (sectionId) => {
         const el = document.getElementById(sectionId);

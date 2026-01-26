@@ -463,6 +463,32 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
 
     const overlayDebounceRef = useRef(null);
 
+    // Load Global Defaults
+    useEffect(() => {
+        const loadGlobalDefaults = async () => {
+            try {
+                const res = await fetch(`${API_URL}/settings`);
+                const settings = await res.json();
+                if (settings.cover) {
+                    setOverlay(prev => {
+                        // Only apply defaults if we don't have project-specific overrides yet
+                        // Check if projectData has specific overlay settings
+                        if (projectData?.cover?.text_overlay) return prev;
+
+                        return {
+                            ...prev,
+                            color: settings.cover.default_color || prev.color,
+                            background: settings.cover.default_background || prev.background,
+                            position: settings.cover.default_position || prev.position
+                        };
+                    });
+                }
+            } catch (e) { console.error("Failed to load defaults", e); }
+        };
+        loadGlobalDefaults();
+    }, [projectData?.cover?.text_overlay]); // Re-run checked if projectData changes, but really we just want to ensure we respect it
+
+
     // Init state from projectData
     useEffect(() => {
         if (!projectData) return;
@@ -618,7 +644,7 @@ function VideoCoverManager({ projectId, projectData, assets, onUpdate }) {
         // If NO overlay text exists at all, run auto-hook + save + timeline
         if (!hasOverlayInJson && !overlay.title && !overlay.subtitle && !fetchingScript) {
             console.log("Auto-Generating Hook (Missing)...");
-            handleAutoGenerateHook(true, true); // Silent, Include Timeline
+            handleAutoGenerateHook(true, false); // Silent, Skip Timeline (Voice might not exist yet)
         }
     }, [projectData, assets]);
 

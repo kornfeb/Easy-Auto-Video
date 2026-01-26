@@ -22,10 +22,21 @@ def get_zoompan_filter(seg, width, height, frames, crop_data=None):
     preset = kb.get("preset", "subtle")
     z_start, z_end = 1.0, 1.07
     x_expr, y_expr = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
-    if preset == "zoom_in": z_start, z_end = 1.0, 1.15
-    elif preset == "zoom_out": z_start, z_end = 1.15, 1.0
     
-    if crop_data and crop_data.get("roi"):
+    if preset == "zoom_in": 
+        z_start, z_end = 1.0, 1.15
+    elif preset == "zoom_out": 
+        z_start, z_end = 1.15, 1.0
+    elif preset == "pan_left_right":
+        z_start, z_end = 1.3, 1.3 # Static zoom for pan
+        x_expr = f"(on/{frames})*(iw-iw/zoom)"
+        y_expr = "ih/2-(ih/zoom/2)"
+    elif preset == "pan_bottom_top":
+        z_start, z_end = 1.3, 1.3 # Static zoom for pan
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = f"(1-(on/{frames}))*(ih-ih/zoom)"
+    
+    if crop_data and crop_data.get("roi") and preset not in ["pan_left_right", "pan_bottom_top"]:
         roi = crop_data["roi"]
         dims = crop_data.get("dimensions", {})
         if dims.get("w") and dims.get("h"):
@@ -38,7 +49,7 @@ def get_zoompan_filter(seg, width, height, frames, crop_data=None):
     y_expr = f"clip({y_expr},0,ih-ih/zoom)"
     return f"zoompan=z='{z_expr}':d={frames}:x='{x_expr}':y='{y_expr}':s={width}x{height}:fps=30"
 
-def render_video(project_path, video_format="portrait", transition_id="none", transition_duration=0):
+def render_video(project_path, video_format="portrait", transition_id="none", transition_duration=0, output_file=None):
     """
     Final high-stability renderer using Concat method. 
     Transitions (xfade) are disabled for this build to ensure 100% success rate.
@@ -61,7 +72,10 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
         from PIL import Image
         crops_data = load_crops(project_path)
         input_dir = os.path.join(project_path, "input")
-        output_file = os.path.join(project_path, "output", "final_video.mp4")
+        
+        if not output_file:
+            output_file = os.path.join(project_path, "output", "final_video.mp4")
+            
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         if os.path.exists(output_file): os.remove(output_file)
 
@@ -72,8 +86,12 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
         
         for i, seg in enumerate(segments):
             img_name = seg["image"]
-            img_path = os.path.abspath(os.path.join(input_dir, img_name))
-            if img_name.startswith("../"): img_path = os.path.abspath(os.path.join(project_path, img_name[3:]))
+            image_id = img_name
+            if img_name.startswith("../"):
+                image_id = img_name[3:]
+                img_path = os.path.abspath(os.path.join(project_path, image_id))
+            else:
+                img_path = os.path.abspath(os.path.join(input_dir, img_name))
             
             # Formate normalization via PIL
             temp_jpg = os.path.join(project_path, f"input_stb_{i}.jpg")
@@ -85,12 +103,16 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
 
             inputs.extend(["-loop", "1", "-r", "30", "-i", img_path])
             dur = seg['duration']
-            frames = int(math.ceil((dur + 1.0) * 30))
-            kb = get_zoompan_filter(seg, WIDTH, HEIGHT, frames)
+            frames = int(math.ceil(dur * 30))
+            if frames < 1: frames = 1
+            
+            # Pass crop data for this specific image
+            seg_crop = crops_data.get(image_id)
+            kb = get_zoompan_filter(seg, WIDTH, HEIGHT, frames, crop_data=seg_crop)
             
             node = f"[v{i}]"
             filter_parts.append(
-                f"[{i+1}:v]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
+                f"[{i+1}:v]scale={WIDTH}*2:{HEIGHT}*2:force_original_aspect_ratio=increase,crop={WIDTH}*2:{HEIGHT}*2,"
                 f"setsar=1,fps=30,{kb},format=yuv420p,trim=duration={dur},setpts=PTS-STARTPTS{node}"
             )
             concat_nodes.append(node)
@@ -98,14 +120,34 @@ def render_video(project_path, video_format="portrait", transition_id="none", tr
         full_filter = ";".join(filter_parts)
         concat_str = "".join(concat_nodes)
         
+        # Check if audio needs trimming (max duration applied)
+        audio_trim_filter = ""
+        voice_config = timeline.get("audio", {}).get("voice", {})
+        trim_to = voice_config.get("trim_to")
+        if trim_to and trim_to > 0:
+            audio_trim_filter = f"[0:a]atrim=0:{trim_to},asetpts=PTS-STARTPTS[a_out];"
+            audio_map = "[a_out]"
+            log_event(project_path, "render.log", f"[RENDER] Trimming audio to {trim_to}s (max duration limit)")
+        else:
+            audio_map = "0:a"
+        
         cmd = ["ffmpeg", "-y"]
         cmd.extend(inputs)
-        cmd.extend([
-            "-filter_complex", f"{full_filter};{concat_str}concat=n={len(segments)}:v=1:a=0,format=yuv420p[v_out]",
-            "-map", "[v_out]", "-map", "0:a",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k", "-shortest", output_file
-        ])
+        
+        if audio_trim_filter:
+            cmd.extend([
+                "-filter_complex", f"{audio_trim_filter}{full_filter};{concat_str}concat=n={len(segments)}:v=1:a=0,format=yuv420p[v_out]",
+                "-map", "[v_out]", "-map", audio_map,
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k", "-shortest", output_file
+            ])
+        else:
+            cmd.extend([
+                "-filter_complex", f"{full_filter};{concat_str}concat=n={len(segments)}:v=1:a=0,format=yuv420p[v_out]",
+                "-map", "[v_out]", "-map", audio_map,
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k", "-shortest", output_file
+            ])
         
         log_event(project_path, "render.log", f"[RENDER] Launching Concat Render...")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=get_ffmpeg_env())

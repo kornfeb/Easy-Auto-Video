@@ -7,11 +7,28 @@ from core.config import PROJECTS_DIR
 from core.logger import log_event
 from core.state import set_done
 
+# Global status tracker for background tasks
+active_tasks = {}
+
+def get_active_tasks():
+    return active_tasks
+
 def download_images_from_urls(project_id, urls):
     project_path = os.path.join(PROJECTS_DIR, project_id)
     input_dir = os.path.join(project_path, "input")
     
+    task_id = f"dl_{project_id}"
+    active_tasks[task_id] = {
+        "project_id": project_id,
+        "total": len(urls),
+        "completed": 0,
+        "status": "downloading",
+        "started_at": datetime.now().isoformat()
+    }
+    
     if not os.path.exists(project_path):
+        active_tasks[task_id]["status"] = "failed"
+        active_tasks[task_id]["error"] = "Project directory not found"
         return None
     
     results = []
@@ -63,13 +80,20 @@ def download_images_from_urls(project_id, urls):
             success_count += 1
             current_index += 1 # Increment for next file
             
+            # Update background task tracker
+            active_tasks[task_id]["completed"] = success_count
+            
         except Exception as e:
             status["error"] = str(e)
             
         results.append(status)
         log_event(project_path, "upload-url.log", f"URL: {url} | Success: {status['success']} | File: {status['filename']} | Error: {status['error']}")
 
+    active_tasks[task_id]["status"] = "completed"
+    active_tasks[task_id]["finished_at"] = datetime.now().isoformat()
+
     if success_count > 0:
         set_done(project_path, "upload.done")
             
     return {"results": results, "success_count": success_count}
+

@@ -105,11 +105,11 @@ export default function TimelinePreview({ projectId, refreshTs, onEditAsset }) {
         } else if (preset === 'zoom_out') {
             scale = 1.15 - (0.15 * t);
         } else if (preset === 'pan_left_right') {
-            scale = 1.12;
-            x = -4 + (8 * t); // Pan from -4% to +4%
+            scale = 1.3;
+            x = -11.5 + (23 * t); // Pan more dramatically to match the new 1.3 zoom
         } else if (preset === 'pan_bottom_top') {
-            scale = 1.12;
-            y = 4 - (8 * t); // Pan from +4% to -4%
+            scale = 1.3;
+            y = 11.5 - (23 * t); // Pan more dramatically to match the new 1.3 zoom
         }
 
         // Smart Direction (ROI Aware)

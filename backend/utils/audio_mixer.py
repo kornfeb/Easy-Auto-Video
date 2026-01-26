@@ -3,6 +3,7 @@ import math
 import json
 from pydub import AudioSegment
 from core.logger import log_event
+from utils.tts_handler import get_actual_duration
 
 def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None):
     """
@@ -54,6 +55,12 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
                 # 2. Fallback to legacy if still empty
                 if not music_filename:
                     music_filename = legacy_track
+                
+                # 3. Final fallback to default music from global settings
+                if not music_filename:
+                    from core.global_settings import get_settings
+                    settings = get_settings()
+                    music_filename = settings.music.default_music_file
 
             # Resolve Volume (if not provided in args)
             if bgm_volume_adj is None:
@@ -67,23 +74,29 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
             settings_ducking = music_settings.get("duck_voice", True)
 
         # Paths
-        voice_path = os.path.join(project_path, "audio", "voice_processed.mp3")
-        if not os.path.exists(voice_path):
-            voice_path = os.path.join(project_path, "audio", "voice.mp3")
+        voice_raw_path = os.path.join(project_path, "audio", "voice.mp3")
+        voice_processed_path = os.path.join(project_path, "audio", "voice_processed.mp3")
+        
+        # Prefer processed voice.mp3 first (normalized and trimmed) to match timeline
+        if os.path.exists(voice_processed_path):
+            voice_path = voice_processed_path
+            log_event(project_path, "pipeline.log", "[AUDIO_MIX] Using processed voice (recommended)")
+        elif os.path.exists(voice_raw_path):
+            voice_path = voice_raw_path
+            log_event(project_path, "pipeline.log", "[AUDIO_MIX] Using raw voice (fallback)")
+        else:
+            return {"status": "FAIL", "error": "No voice file found"}
+            
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "music")
         
         # Output
         output_path = os.path.join(project_path, "output", "final_audio_mix.wav")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        # Validation
-        if not os.path.exists(voice_path):
-            return {"status": "FAIL", "error": "voice.mp3 not found"}
             
         if not music_filename or music_filename == "none":
             voice = AudioSegment.from_file(voice_path)
             # Apply Voice Gain
-            # Pydub: gain in dB. multiplier -> dB = 20 * log10(gain)
+            # Pydub: gain in dB. multiplier -> dB = 20 * math.log10(gain)
             if settings_gain_voice != 1.0:
                  db_change = 0
                  if settings_gain_voice > 0.01:
@@ -117,12 +130,16 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
 
         # Load Audio
         log_event(project_path, "pipeline.log", f"[AUDIO_MIX] Mixing voice with {music_filename}...")
+        log_event(project_path, "pipeline.log", f"[AUDIO_MIX] Music path: {music_path}")
         voice = AudioSegment.from_file(voice_path)
         music = AudioSegment.from_file(music_path)
         
+        log_event(project_path, "pipeline.log", f"[AUDIO_MIX] Voice File: {voice_path}, Duration: {len(voice)}ms")
+        log_event(project_path, "pipeline.log", f"[AUDIO_MIX] Music File: {music_path}, Duration: {len(music)}ms")
+        
         # Apply Voice Gain
         if settings_gain_voice != 1.0:
-             if settings_gain_voice > 0.01:
+             if isinstance(settings_gain_voice, (int, float)) and settings_gain_voice > 0.01:
                 voice = voice + (20 * math.log10(settings_gain_voice))
         
         voice_duration_ms = len(voice)
@@ -133,7 +150,7 @@ def mix_background_music(project_path, music_filename=None, bgm_volume_adj=None)
         if bgm_volume_adj is not None:
              music_db_adj = bgm_volume_adj
         else:
-             if settings_gain_music > 0.001:
+             if isinstance(settings_gain_music, (int, float)) and settings_gain_music > 0.001:
                  music_db_adj = 20 * math.log10(settings_gain_music)
              else:
                  music_db_adj = -100 # Silence

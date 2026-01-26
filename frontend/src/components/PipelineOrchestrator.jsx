@@ -43,16 +43,9 @@ export default function PipelineOrchestrator({ projectId, projectStatus, onUpdat
                         // Job finished (completed or failed)
                         stopPolling();
                         if (data.status === 'completed' && job?.status === 'running') {
-                            // Just finished - refresh and scroll to video
-                            onUpdate();
-
-                            // Wait for DOM update then scroll to video section
-                            setTimeout(() => {
-                                const videoSection = document.querySelector('[data-section="video-preview"]');
-                                if (videoSection) {
-                                    videoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                }
-                            }, 500);
+                            // Just finished - mark for scroll and reload
+                            localStorage.setItem('scrollToVideo', 'true');
+                            window.location.reload();
                         }
                     }
                 } else {

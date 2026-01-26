@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Film, Download, Video, Loader2, Play } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Film, Download, Video, Loader2, Play, FileVideo } from 'lucide-react';
 import { API_URL } from '../config';
 
 export default function VideoRenderer({ projectId, lastUpdated, projectData, onUpdate }) {
@@ -7,10 +7,13 @@ export default function VideoRenderer({ projectId, lastUpdated, projectData, onU
     const [videoFormat, setVideoFormat] = useState('portrait');
     const [transitionId, setTransitionId] = useState('slideright');
     const [transitionDur, setTransitionDur] = useState(1.0);
+    const [outputPath, setOutputPath] = useState(null);
 
     // Use timestamp to force refresh video buffer
     const cacheBust = projectData.last_updated ? new Date(projectData.last_updated).getTime() : Date.now();
-    const finalUrl = `${API_URL}/media/${projectId}/output/final_video.mp4?t=${cacheBust}`;
+
+    // Use the download endpoint with preview=true to stream the file from the standardized path
+    const finalUrl = `${API_URL}/projects/${projectId}/download/video?preview=true&t=${cacheBust}`;
 
     const TRANSITIONS = [
         { id: 'none', name: 'None (Hard Cut)' },
@@ -20,6 +23,16 @@ export default function VideoRenderer({ projectId, lastUpdated, projectData, onU
         { id: 'circleopen', name: 'Circle Open' },
         { id: 'wipedown', name: 'Wipe Down' }
     ];
+
+    useEffect(() => {
+        // Fetch the display path
+        fetch(`${API_URL}/projects/${projectId}/output_path`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.exists) setOutputPath(data.path);
+            })
+            .catch(console.error);
+    }, [projectId, lastUpdated, rendering]);
 
     const handleRender = async () => {
         setRendering(true);
@@ -173,14 +186,23 @@ export default function VideoRenderer({ projectId, lastUpdated, projectData, onU
                             </video>
                         </div>
 
-                        <div className="mt-8 flex gap-4 w-full max-w-md">
+                        <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-md">
                             <a
                                 href={`${API_URL}/projects/${projectId}/download/video`}
                                 download
-                                className="flex-1 h-12 bg-white text-gray-900 border border-gray-200 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition-all"
+                                className="w-full h-12 bg-white text-gray-900 border border-gray-200 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition-all"
                             >
                                 <Download size={18} /> Download MP4
                             </a>
+
+                            {outputPath && (
+                                <div className="text-xs text-gray-400 font-mono text-center flex items-center gap-2 opacity-75">
+                                    <FileVideo size={12} />
+                                    <span className="truncate max-w-[300px]" title={outputPath}>
+                                        {outputPath.split('/').slice(-3).join('/')}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

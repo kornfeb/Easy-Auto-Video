@@ -9,9 +9,15 @@ def build_timeline(project_path, bgm_config=None):
     Uses settings from project.json if available.
     """
     
-    # Defaults
-    silence_start = 0.0
-    silence_end = 0.0
+    from core.global_settings import get_settings
+    settings = get_settings()
+    
+    # Defaults from Global Settings
+    silence_start = settings.video.intro_silence_sec
+    silence_end = settings.video.outro_silence_sec
+    default_duration = settings.video.default_duration_sec # Used if we need target duration fallback logic
+    
+    log_event(project_path, "pipeline.log", f"[TIMELINE] Loaded global settings: Intro={silence_start}s, Outro={silence_end}s")
 
     # Load Settings
     project_json_path = os.path.join(project_path, "project.json")
@@ -52,13 +58,30 @@ def build_timeline(project_path, bgm_config=None):
     log_event(project_path, "pipeline.log", 
              f"[TIMELINE] Audio duration detected: {total_audio_duration}s")
     
-    # 2. Calculate Usable Duration (exclude silence regions)
-    usable_duration = total_audio_duration - silence_start - silence_end
+    # Apply max duration limit from global settings
+    max_duration = default_duration
+    usable_audio_duration = total_audio_duration
     
-    if total_audio_duration <= 0:
-         log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: Audio too short")
-         return {"status": "FAIL", "error": "Audio duration too short."}
+    if total_audio_duration > max_duration:
+        usable_audio_duration = max_duration
+        log_event(project_path, "pipeline.log", 
+                 f"[TIMELINE] WARNING: Audio ({total_audio_duration}s) exceeds max duration ({max_duration}s). Trimming to {max_duration}s")
     
+    # Usable duration (excluding silence padding)
+    usable_duration = usable_audio_duration - silence_start - silence_end
+    if usable_duration <= 0:
+        # If silence padding makes usable_duration negative or zero,
+        # we should still allow some duration for content,
+        # or return an error if the total usable_audio_duration is too short.
+        if usable_audio_duration <= 0:
+            log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: Audio too short after trimming/silence")
+            return {"status": "FAIL", "error": "Audio duration too short."}
+        else:
+            # If usable_duration is negative due to silence, cap it at 0 for calculation,
+            # but ensure total duration is still respected.
+            usable_duration = 0.0
+            log_event(project_path, "pipeline.log", "[TIMELINE] WARNING: Silence padding exceeds usable audio duration. Content duration set to 0.")
+        
     log_event(project_path, "pipeline.log", 
              f"[TIMELINE] Usable duration (excluding silence): {usable_duration}s")
 
@@ -90,7 +113,8 @@ def build_timeline(project_path, bgm_config=None):
     if os.path.exists(cover_path):
          images.insert(0, "../cover.jpg")
              
-    images.sort(key=lambda x: x if not x.startswith("../") else "0_cover") # Sort cover first if it's there
+    from utils.sort_utils import natural_sort_key
+    images.sort(key=lambda x: natural_sort_key(x) if not x.startswith("../") else ["", -1]) # Sort cover first
 
     if not images:
         log_event(project_path, "pipeline.log", "[TIMELINE] FAIL: No images found")
@@ -119,7 +143,7 @@ def build_timeline(project_path, bgm_config=None):
             
         # EXCEPTION 2: Last Image (Absorb any rounding errors to match total duration)
         if i == num_images - 1:
-            segment_duration = total_audio_duration - current_time
+            segment_duration = usable_audio_duration - current_time
         
         if segment_duration < 0: segment_duration = 0
 
@@ -152,6 +176,7 @@ def build_timeline(project_path, bgm_config=None):
     timeline = {
         "project_id": os.path.basename(project_path),
         "total_audio_duration": round(total_audio_duration, 3),
+        "usable_audio_duration": round(usable_audio_duration, 3),  # Trimmed duration if max applied
         "silence_start_duration": silence_start,
         "silence_end_duration": silence_end,
         "usable_duration": round(usable_duration, 3),
@@ -159,16 +184,19 @@ def build_timeline(project_path, bgm_config=None):
         "audio": {
             "voice": {
                 "file": "voice.mp3",
-                "volume": 1.0
+                "volume": 1.0,
+                "trim_to": round(usable_audio_duration, 3) if usable_audio_duration < total_audio_duration else None
             },
             "bgm": bgm_config
         },
         "metadata": {
             "generated_at": os.path.getmtime(voice_path),
             "num_images": num_images,
+            "max_duration_applied": usable_audio_duration < total_audio_duration,
             "settings_used": {
                 "silence_start": silence_start,
-                "silence_end": silence_end
+                "silence_end": silence_end,
+                "max_duration": max_duration
             }
         }
     }

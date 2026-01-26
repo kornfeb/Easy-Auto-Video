@@ -15,22 +15,38 @@ export default function MusicManager({ projectId, lastUpdated, projectData, onUp
             .then(res => res.json())
             .then(data => setMusicFiles(data));
 
-        // Load config from project data
-        if (projectData && projectData.music_config) {
-            setSelectedMusic(projectData.music_config.music_file || 'carefree.mp3');
-            // If explicit enabled param exists use it, otherwise default to true
-            if (projectData.music_config.enabled !== undefined) {
-                setEnabled(projectData.music_config.enabled);
-            } else {
-                setEnabled(true);
-            }
-            setVolume(projectData.music_config.volume_adj || -16);
-        } else {
-            // Defaults for new projects
-            setSelectedMusic('carefree.mp3');
-            setEnabled(true);
-            setVolume(-16);
-        }
+        // Fetch global settings for defaults
+        fetch(`${API_URL}/settings`)
+            .then(res => res.json())
+            .then(globalSettings => {
+                // Load config from project data
+                if (projectData && projectData.music_config) {
+                    setSelectedMusic(projectData.music_config.music_file || globalSettings.music.default_music_file);
+                    if (projectData.music_config.enabled !== undefined) {
+                        setEnabled(projectData.music_config.enabled);
+                    } else {
+                        setEnabled(true);
+                    }
+                    setVolume(projectData.music_config.volume_adj || globalSettings.music.default_volume_db);
+                } else {
+                    // Defaults from global settings for new projects
+                    setSelectedMusic(globalSettings.music.default_music_file);
+                    setEnabled(true);
+                    setVolume(globalSettings.music.default_volume_db);
+                }
+            })
+            .catch(() => {
+                // Fallback if settings fetch fails
+                if (projectData && projectData.music_config) {
+                    setSelectedMusic(projectData.music_config.music_file || 'carefree.mp3');
+                    setEnabled(projectData.music_config.enabled !== undefined ? projectData.music_config.enabled : true);
+                    setVolume(projectData.music_config.volume_adj || -16);
+                } else {
+                    setSelectedMusic('carefree.mp3');
+                    setEnabled(true);
+                    setVolume(-16);
+                }
+            });
     }, [projectId, projectData]);
 
     const handleMix = async () => {

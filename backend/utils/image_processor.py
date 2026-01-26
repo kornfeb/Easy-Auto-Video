@@ -67,6 +67,16 @@ def render_cover_overlay(project_path, overlay_config):
     # 2. Extract Config
     title = overlay_config.get("title", "").strip()
     subtitle = overlay_config.get("subtitle", "").strip()
+    
+    # Enforce Global Constraints
+    from core.global_settings import get_settings
+    settings = get_settings()
+    
+    if len(title) > settings.text_overlay.title_max_characters:
+        title = title[:settings.text_overlay.title_max_characters]
+        
+    if len(subtitle) > settings.text_overlay.subtitle_max_characters:
+        subtitle = subtitle[:settings.text_overlay.subtitle_max_characters]
     position = overlay_config.get("position", "bottom") # top, center, bottom
     style_color = overlay_config.get("color", "#FFFFFF")
     style_bg = overlay_config.get("background", "none") # none, box, gradient
@@ -96,8 +106,8 @@ def render_cover_overlay(project_path, overlay_config):
     max_char_width = 20 # Rough estimate, better to measure
     # Pillow doesn't have robust wrapping for Thai built-in simply, use textwrap for now
     
-    title_lines = textwrap.wrap(title, width=25) # constrained char count
-    sub_lines = textwrap.wrap(subtitle, width=40)
+    title_lines = textwrap.wrap(title, width=25)[:settings.text_overlay.max_lines] # constrained char count
+    sub_lines = textwrap.wrap(subtitle, width=40)[:settings.text_overlay.max_lines]
     
     # Calculate Dimensions
     padding = int(W * 0.05)

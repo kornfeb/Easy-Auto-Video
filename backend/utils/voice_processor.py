@@ -58,7 +58,7 @@ def process_voice(project_id, project_path):
         try:
             cmd = [
                 "ffmpeg", "-y", "-i", raw_audio,
-                "-af", "silenceremove=start_periods=1:stop_periods=1:start_threshold=-50dB:stop_threshold=-50dB,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                 processed_audio
             ]
             subprocess.run(cmd, check=True, capture_output=True)

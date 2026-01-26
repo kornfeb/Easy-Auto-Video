@@ -1,10 +1,41 @@
 import os
 import json
 from datetime import datetime
-from core.config import PROJECTS_DIR
+from core.config import PROJECTS_DIR, BASE_DIR
 from core.logger import log_event
 
-def initialize_project_structure(project_id: str, product_name: str = None) -> dict:
+def get_video_output_path(project_path: str) -> str:
+    """
+    Calculates the standard video output path:
+    Easy Auto Video/output/YYMMDD/productname.mp4
+    """
+    product_json_path = os.path.join(project_path, "input", "product.json")
+    product_name = "final_video"
+    
+    if os.path.exists(product_json_path):
+        try:
+            with open(product_json_path, 'r') as f:
+                data = json.load(f)
+                product_name = data.get("product_name", "final_video")
+        except:
+            pass
+            
+    # Clean and truncate product name (max 25 chars)
+    # Remove characters that might be invalid for filenames
+    import re
+    product_name = re.sub(r'[^\w\s\u0E00-\u0E7F-]', '', product_name)
+    product_name = product_name.strip()[:25]
+    if not product_name:
+        product_name = "final_video"
+        
+    date_str = datetime.now().strftime("%y%m%d")
+    output_dir = os.path.join(BASE_DIR, "output", date_str)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    return os.path.join(output_dir, f"{product_name}.mp4")
+
+
+def initialize_project_structure(project_id: str, product_name: str = None, badge_name: str = None) -> dict:
     if not project_id or ".." in project_id or project_id.startswith("/"):
         raise ValueError("Invalid project_id")
 
@@ -34,6 +65,8 @@ def initialize_project_structure(project_id: str, product_name: str = None) -> d
 
     if product_name and not os.path.exists(product_json_path):
         payload = {"product_name": product_name}
+        if badge_name:
+            payload["badge_name"] = badge_name
         with open(product_json_path, 'w') as f:
             json.dump(payload, f, indent=2)
 
@@ -41,6 +74,7 @@ def initialize_project_structure(project_id: str, product_name: str = None) -> d
         now = datetime.now().isoformat()
         initial_data = {
             "status": "initialized",
+            "badge_name": badge_name or "-",
             "created_at": now,
             "last_updated": now,
             "settings": {
@@ -84,6 +118,7 @@ def list_projects_metadata():
                         data = json.load(f)
                         
                         product_name = "-"
+                        p_data = {}
                         product_json_path = os.path.join(project_path, "input", "product.json")
                         if os.path.exists(product_json_path):
                             try:
@@ -105,10 +140,30 @@ def list_projects_metadata():
                         # Prepare base item with all JSON data
                         project_item = data.copy()
                         
+                        # Check for video and build URL
+                        video_url = None
+                        video_path = data.get("video_path")
+                        if video_path:
+                            from core.config import BASE_DIR
+                            full_video_path = os.path.join(BASE_DIR, video_path)
+                            if os.path.exists(full_video_path):
+                                # Convert base-relative path (output/YYMMDD/file.mp4) 
+                                # to mount-relative path (v_output/YYMMDD/file.mp4)
+                                if video_path.startswith("output/"):
+                                    video_url = f"/v_output/{video_path[len('output/'):]}"
+                                else:
+                                    # Fallback if path structure is different
+                                    video_url = f"/v_output/{os.path.basename(video_path)}"
+
+                        # Product URL from project.json or nested product.json
+                        product_url = data.get("product_url") or p_data.get("product_url")
+
                         # Merge/Override specific metadata
                         project_item.update({
                             "project_id": item,
                             "product_name": product_name,
+                            "product_url": product_url,
+                            "video_url": video_url,
                             "config": config
                         })
                         
@@ -117,6 +172,40 @@ def list_projects_metadata():
                     print(f"Error reading project {item}: {e}")
                     continue
     return projects
+
+def list_projects_paged(page: int = 1, limit: int = 20, sort_by: str = "last_updated", order: str = "desc"):
+    all_projects = list_projects_metadata()
+    
+    # Sorting logic
+    reverse = True if order.lower() == "desc" else False
+    
+    def sort_key(p):
+        if sort_by == "badge_name":
+            return p.get("badge_name", "").lower()
+        elif sort_by == "product_name":
+            return p.get("product_name", "").lower()
+        elif sort_by == "project_id":
+            return p.get("project_id", "").lower()
+        elif sort_by == "created_at":
+            return p.get("created_at", "")
+        else: # Default last_updated
+            return p.get("last_updated", "")
+
+    all_projects.sort(key=sort_key, reverse=reverse)
+    
+    # Pagination
+    total = len(all_projects)
+    start = (page - 1) * limit
+    end = start + limit
+    paged_projects = all_projects[start:end]
+    
+    return {
+        "projects": paged_projects,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit
+    }
 
 def update_product_name(project_id, new_name):
     project_path = os.path.join(PROJECTS_DIR, project_id)

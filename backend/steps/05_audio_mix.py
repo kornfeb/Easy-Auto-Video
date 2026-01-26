@@ -19,12 +19,16 @@ class AudioMixStep(PipelineStep):
         if err:
             raise PipelineError(f"Voice prep failed: {err}", message_th="เตรียมวิดีโอเสียงไม่สำเร็จ")
             
-        # 2. Mix with Music (uses voice.mp3 by default in mixer, but we should use voice_processed.mp3?)
-        # Actually mixer.py line 53 uses voice.mp3. Let's fix that or pass the right path.
-        # For compatibility with existing mixer, let's just run it. 
-        # Mixer might need update to use processed voice.
+        # 2. Mix with Music
+        # Use global settings for defaults
+        from core.global_settings import get_settings
+        settings = get_settings()
         
-        mix_res = mix_background_music(project_path)
+        mix_res = mix_background_music(
+            project_path, 
+            music_filename=settings.music.default_music_file,
+            bgm_volume_adj=settings.music.default_volume_db
+        )
         if mix_res.get("status") == "FAIL":
             raise PipelineError(f"Mixing failed: {mix_res.get('error')}", message_th="ผสมเสียงพื้นหลังไม่สำเร็จ")
             
